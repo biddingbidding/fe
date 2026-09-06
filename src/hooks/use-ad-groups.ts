@@ -5,8 +5,9 @@ import { queryKeys } from "@/lib/query-keys"
 import type {
   AdGroup,
   AdGroupKeyword,
+  AdGroupSettingPatch,
   BidSettingValues,
-  Device,
+  Region,
   StatsPeriod,
 } from "@/types/ads"
 
@@ -15,6 +16,16 @@ export function useAdGroups(customerId: string | undefined) {
     queryKey: queryKeys.adGroups(customerId ?? ""),
     queryFn: api.getAdGroups,
     enabled: !!customerId,
+  })
+}
+
+/** 노출 지역으로 고를 수 있는 시/도 목록. 고정 데이터라 한 번만 받는다. 로그인 전에는 조회하지 않는다. */
+export function useRegions(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.regions,
+    queryFn: api.getRegions,
+    enabled,
+    staleTime: Infinity,
   })
 }
 
@@ -110,24 +121,24 @@ export function useBulkUpdateKeywordSettings(adGroupId: string | null) {
   })
 }
 
-/** 광고 그룹 하나의 기기(device)를 낙관적으로 수정한다. 실패하면 되돌린다. */
-export function useUpdateAdGroupDevice(customerId: string | undefined) {
+/** 광고 그룹 하나의 설정(기기·우선순위)을 낙관적으로 수정한다. 보낸 필드만 바뀐다. 실패하면 되돌린다. */
+export function useUpdateAdGroupSetting(customerId: string | undefined) {
   const queryClient = useQueryClient()
   const key = queryKeys.adGroups(customerId ?? "")
 
   return useMutation({
     mutationFn: ({
       adGroupId,
-      device,
+      patch,
     }: {
       adGroupId: string
-      device: Device | null
-    }) => api.patchAdGroupSetting(adGroupId, { device }),
-    onMutate: async ({ adGroupId, device }) => {
+      patch: AdGroupSettingPatch
+    }) => api.patchAdGroupSetting(adGroupId, patch),
+    onMutate: async ({ adGroupId, patch }) => {
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData<AdGroup[]>(key)
       queryClient.setQueryData<AdGroup[]>(key, (prev) =>
-        prev?.map((g) => (g.id === adGroupId ? { ...g, device } : g))
+        prev?.map((g) => (g.id === adGroupId ? { ...g, ...patch } : g))
       )
       return { previous }
     },
@@ -138,44 +149,139 @@ export function useUpdateAdGroupDevice(customerId: string | undefined) {
 }
 
 /**
- * 여러 광고 그룹의 기기를 같은 값으로 일괄 수정한다 (그룹별 PATCH 병렬 호출).
- * 낙관적으로 반영하고, 하나라도 실패하면 목록을 다시 불러와 실제 상태로 되돌린다.
- * 실패한 그룹 수를 돌려준다.
+ * 계정의 모든 광고 그룹에 같은 설정값(기기 또는 우선순위)을 저장한다 (PUT /api/adgroups/settings).
+ * 낙관적으로 반영하고, 실패하면 되돌린다. 저장된 그룹 수를 돌려준다.
  */
-export function useUpdateAdGroupDevices(customerId: string | undefined) {
+export function useApplySettingToAll(customerId: string | undefined) {
   const queryClient = useQueryClient()
   const key = queryKeys.adGroups(customerId ?? "")
 
   return useMutation({
-    mutationFn: async ({
-      adGroupIds,
-      device,
-    }: {
-      adGroupIds: string[]
-      device: Device | null
-    }) => {
-      const results = await Promise.allSettled(
-        adGroupIds.map((id) => api.patchAdGroupSetting(id, { device }))
-      )
-      return results.filter((r) => r.status === "rejected").length
-    },
-    onMutate: async ({ adGroupIds, device }) => {
+    mutationFn: async (patch: AdGroupSettingPatch) =>
+      (await api.applyAdGroupSettingToAll(patch)).updated,
+    onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData<AdGroup[]>(key)
-      const targets = new Set(adGroupIds)
       queryClient.setQueryData<AdGroup[]>(key, (prev) =>
-        prev?.map((g) => (targets.has(g.id) ? { ...g, device } : g))
+        prev?.map((g) => ({ ...g, ...patch }))
       )
       return { previous }
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
     },
-    onSuccess: async (failedCount) => {
-      if (failedCount > 0) {
-        await queryClient.invalidateQueries({ queryKey: key })
-      }
+  })
+}
+
+/**
+ * 광고 그룹 하나의 자동입찰 on/off (PATCH /api/adgroups/{id}).
+ * 토글이 즉시 반응하도록 낙관적으로 반영하고, 실패하면 되돌린다.
+ * 켜면 서버가 키워드를 자동입찰 대상으로 등록하므로 응답을 캐시에 그대로 반영한다.
+ */
+export function useUpdateAdGroupEnabled(customerId: string | undefined) {
+  const queryClient = useQueryClient()
+  const key = queryKeys.adGroups(customerId ?? "")
+
+  return useMutation({
+    mutationFn: ({
+      adGroupId,
+      enabled,
+    }: {
+      adGroupId: string
+      enabled: boolean
+    }) => api.patchAdGroup(adGroupId, { enabled }),
+    onMutate: async ({ adGroupId, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<AdGroup[]>(key)
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) =>
+          g.id === adGroupId ? { ...g, autobidEnabled: enabled } : g
+        )
+      )
+      return { previous }
     },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+    },
+    onSuccess: (group) => {
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) => (g.id === group.id ? group : g))
+      )
+    },
+  })
+}
+
+/**
+ * 광고 그룹 하나의 노출 지역 (PATCH /api/adgroups/{id}). 네이버 지역 타겟을 직접 바꾼다.
+ * 낙관적으로 반영하고(이름은 regions 목록에서 찾아 채운다), 실패하면 되돌린다.
+ */
+export function useUpdateAdGroupRegion(
+  customerId: string | undefined,
+  regions: Region[]
+) {
+  const queryClient = useQueryClient()
+  const key = queryKeys.adGroups(customerId ?? "")
+
+  return useMutation({
+    mutationFn: ({
+      adGroupId,
+      region,
+    }: {
+      adGroupId: string
+      region: string | null
+    }) => api.patchAdGroup(adGroupId, { region }),
+    onMutate: async ({ adGroupId, region }) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<AdGroup[]>(key)
+      const regionName = regions.find((r) => r.code === region)?.name ?? null
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) =>
+          g.id === adGroupId ? { ...g, region, regionName } : g
+        )
+      )
+      return { previous }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+    },
+    onSuccess: (group) => {
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) => (g.id === group.id ? group : g))
+      )
+    },
+  })
+}
+
+/**
+ * 계정의 모든 광고 그룹의 노출 지역을 같은 값으로 (PUT /api/adgroups/region).
+ * 지역 타겟이 없는 그룹은 서버가 건너뛰므로, 낙관적으로 반영한 뒤 끝나면 목록을 다시 받아 실제 상태로 맞춘다.
+ * 실제로 바뀐 그룹 수를 돌려준다.
+ */
+export function useApplyRegionToAll(
+  customerId: string | undefined,
+  regions: Region[]
+) {
+  const queryClient = useQueryClient()
+  const key = queryKeys.adGroups(customerId ?? "")
+
+  return useMutation({
+    mutationFn: async (region: string | null) =>
+      (await api.applyRegionToAll(region)).adGroups,
+    onMutate: async (region) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<AdGroup[]>(key)
+      const regionName = regions.find((r) => r.code === region)?.name ?? null
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) =>
+          g.region === region ? g : { ...g, region, regionName }
+        )
+      )
+      return { previous }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   })
 }
 

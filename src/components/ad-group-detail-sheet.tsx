@@ -19,17 +19,16 @@ import {
 } from "@/components/ui/table"
 import { useAdGroupKeywords } from "@/hooks/use-ad-groups"
 import { deviceLabel } from "@/lib/device"
+import { priorityLabel } from "@/lib/priority"
+import { REGION_ALL_LABEL } from "@/lib/region"
 import { formatNumber } from "@/lib/format"
 import type { AdGroup } from "@/types/ads"
-import type { BiddingSet } from "@/types/bidding"
 
 interface AdGroupDetailSheetProps {
   isOpen: boolean
   close: () => void
   unmount: () => void
   group: AdGroup
-  /** 그룹이 속한 세트들. 미배정이면 빈 배열 */
-  sets: BiddingSet[]
 }
 
 /** 광고 그룹 행 클릭 시 열리는 상세 시트 — 기본 정보 + 키워드 목록(읽기 전용). overlay-kit으로 연다. */
@@ -38,7 +37,6 @@ export function AdGroupDetailSheet({
   close,
   unmount,
   group,
-  sets,
 }: AdGroupDetailSheetProps) {
   return (
     <Sheet
@@ -51,13 +49,13 @@ export function AdGroupDetailSheet({
       }}
     >
       <SheetContent className="sm:max-w-lg">
-        <DetailBody group={group} sets={sets} />
+        <DetailBody group={group} />
       </SheetContent>
     </Sheet>
   )
 }
 
-function DetailBody({ group, sets }: { group: AdGroup; sets: BiddingSet[] }) {
+function DetailBody({ group }: { group: AdGroup }) {
   const {
     data: keywords,
     isLoading,
@@ -76,12 +74,20 @@ function DetailBody({ group, sets }: { group: AdGroup; sets: BiddingSet[] }) {
       </SheetHeader>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 text-sm">
-        <dt className="text-muted-foreground">세트</dt>
+        <dt className="text-muted-foreground">자동입찰</dt>
         <dd>
-          {sets.length > 0 ? (
-            <span>{sets.map((s) => s.name).join(", ")}</span>
+          {group.autobidEnabled ? (
+            <span>진행 중</span>
           ) : (
-            <span className="text-muted-foreground">미배정</span>
+            <span className="text-muted-foreground">정지</span>
+          )}
+        </dd>
+        <dt className="text-muted-foreground">지역</dt>
+        <dd>
+          {group.regionName ? (
+            <span>{group.regionName}</span>
+          ) : (
+            <span className="text-muted-foreground">{REGION_ALL_LABEL}</span>
           )}
         </dd>
         <dt className="text-muted-foreground">기기</dt>
@@ -90,6 +96,14 @@ function DetailBody({ group, sets }: { group: AdGroup; sets: BiddingSet[] }) {
             <span>{deviceLabel(group.device)}</span>
           ) : (
             <span className="text-muted-foreground">미입력</span>
+          )}
+        </dd>
+        <dt className="text-muted-foreground">우선순위</dt>
+        <dd>
+          {group.priority ? (
+            <span>{priorityLabel(group.priority)}</span>
+          ) : (
+            <span className="text-muted-foreground">{priorityLabel(null)}</span>
           )}
         </dd>
         <dt className="text-muted-foreground">사이트</dt>

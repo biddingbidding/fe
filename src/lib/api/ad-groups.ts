@@ -2,8 +2,11 @@
 import type {
   AdGroup,
   AdGroupKeyword,
+  AdGroupRegionBulkResult,
   AdGroupSetting,
-  Device,
+  AdGroupSettingApplyResult,
+  AdGroupSettingPatch,
+  Region,
   StatsPeriod,
 } from "@/types/ads"
 
@@ -11,16 +14,34 @@ import { request } from "./client"
 
 export const getAdGroups = () => request<AdGroup[]>("GET", "/api/adgroups")
 
-/** 그룹 하나의 설정 수정. device 에 null 을 보내면 미입력(서버 기본값)으로 되돌린다. */
-export const patchAdGroupSetting = (
+/**
+ * 그룹 하나의 자동입찰 on/off 및/또는 노출 지역. 보낸 필드만 바뀐다.
+ * enabled 를 켜면 서버가 그 그룹의 키워드를 자동입찰 대상으로 등록한다.
+ * region 은 GET /api/regions 의 code. null 이면 제한 없음(전체 노출)으로 되돌린다.
+ */
+export const patchAdGroup = (
   id: string,
-  patch: { device: Device | null }
-) =>
+  patch: { enabled?: boolean; region?: string | null }
+) => request<AdGroup>("PATCH", `/api/adgroups/${encodeURIComponent(id)}`, patch)
+
+/** 노출 지역으로 고를 수 있는 시/도 목록 (가나다 순) */
+export const getRegions = () => request<Region[]>("GET", "/api/regions")
+
+/** "모든 그룹에 적용" — 계정의 모든 광고 그룹의 노출 지역을 같은 값으로. 지역 타겟이 없는 그룹은 건너뛴다. */
+export const applyRegionToAll = (region: string | null) =>
+  request<AdGroupRegionBulkResult>("PUT", "/api/adgroups/region", { region })
+
+/** 그룹 하나의 설정(기기·우선순위) 수정. 보낸 필드만 바뀌고, null 을 보내면 미입력(서버 기본값)으로 되돌린다. */
+export const patchAdGroupSetting = (id: string, patch: AdGroupSettingPatch) =>
   request<AdGroupSetting>(
     "PATCH",
     `/api/adgroups/${encodeURIComponent(id)}/settings`,
     patch
   )
+
+/** "모든 그룹에 적용" — 계정의 모든 광고 그룹에 같은 설정값(보낸 필드만)을 저장한다. */
+export const applyAdGroupSettingToAll = (patch: AdGroupSettingPatch) =>
+  request<AdGroupSettingApplyResult>("PUT", "/api/adgroups/settings", patch)
 
 /**
  * 네이버에서 실시간 조회한 키워드 + 사용자 입찰 설정(bidSetting) + 기간 통계(stats) 병합.

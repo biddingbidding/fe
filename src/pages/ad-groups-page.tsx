@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { RefreshCw, UserPlus } from "lucide-react"
 import { toast } from "sonner"
 
-import { AdGroupSelectTable } from "@/components/ad-group-select-table"
-import { SetChipBar, type SetFilter } from "@/components/set-chip-bar"
+import { AdGroupTable } from "@/components/ad-group-table"
 import { Button } from "@/components/ui/button"
 import {
   Tooltip,
@@ -18,7 +17,6 @@ import { errorMessage } from "@/lib/toast"
 
 export function AdGroupsPage() {
   const { account } = useAccount()
-  const [filter, setFilter] = useState<SetFilter>("all")
 
   const customerId = account?.customerId
   const adGroups = useAdGroups(customerId)
@@ -66,9 +64,9 @@ export function AdGroupsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <SetChipBar value={filter} onChange={setFilter} />
+    <AdGroupTable
+      syncing={syncing}
+      actions={
         <Tooltip>
           <TooltipTrigger
             render={
@@ -88,8 +86,7 @@ export function AdGroupsPage() {
             <p>캠페인과 광고 그룹을 다시 불러옵니다</p>
           </TooltipContent>
         </Tooltip>
-      </div>
-      <AdGroupSelectTable filter={filter} syncing={syncing} />
-    </div>
+      }
+    />
   )
 }

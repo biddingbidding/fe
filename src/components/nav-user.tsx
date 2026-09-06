@@ -36,7 +36,7 @@ export function NavUser() {
         close={close}
         unmount={unmount}
         title="광고 계정 연결을 해제할까요?"
-        description="연결을 해제하면 광고 그룹과 자동입찰 세트를 볼 수 없습니다. 다시 연결하면 복구됩니다."
+        description="연결을 해제하면 광고 그룹과 자동입찰 설정을 볼 수 없습니다. 다시 연결하면 복구됩니다."
         confirmLabel="연결 해제"
         pendingLabel="해제 중..."
         destructive

@@ -15,13 +15,18 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
-import { useBiddingSets } from "@/hooks/use-bidding-sets"
+import { useAccount } from "@/hooks/use-account"
+import { useAdGroups } from "@/hooks/use-ad-groups"
 import { pages, type PageKey } from "@/lib/pages"
 
 export function AppSidebar() {
   const { pathname } = useLocation()
-  const { sets } = useBiddingSets()
-  const badges: Partial<Record<PageKey, number>> = { bidding: sets.length }
+  const { account } = useAccount()
+  const { data: groups = [] } = useAdGroups(account?.customerId)
+  // 자동입찰이 켜진 그룹 수
+  const badges: Partial<Record<PageKey, number>> = {
+    bidding: groups.filter((g) => g.autobidEnabled).length,
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -45,7 +50,9 @@ export function AppSidebar() {
                     <item.icon />
                     <span>{item.title}</span>
                   </SidebarMenuButton>
-                  {badges[item.key] ? <SidebarMenuBadge>{badges[item.key]}</SidebarMenuBadge> : null}
+                  {badges[item.key] ? (
+                    <SidebarMenuBadge>{badges[item.key]}</SidebarMenuBadge>
+                  ) : null}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

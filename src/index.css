@@ -3,10 +3,6 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 
-/* 자동입찰 세트 색상은 서버(bidding_sets.color)에서 tailwind 클래스로 내려오므로
-   소스 스캔에 잡히지 않는다. 여기서 강제로 생성한다. */
-@source inline("bg-{blue,emerald,amber,violet,rose,cyan,orange,teal,pink,indigo}-500");
-
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

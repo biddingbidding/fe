@@ -1,6 +1,12 @@
 /** 예상 입찰가를 조회할 기기 */
 export type Device = "PC" | "MOBILE"
 
+/**
+ * 광고 그룹 우선순위 — 그 그룹 키워드를 한 번 살펴본 뒤 최소 대기(HIGH 90초 / NORMAL 180초 / LOW 600초).
+ * 요금제 한도가 모자라면 대기 대비 오래 기다린 키워드부터 검토하므로 높을수록 자주 검토된다.
+ */
+export type Priority = "HIGH" | "NORMAL" | "LOW"
+
 export interface AdGroup {
   /** nccAdgroupId */
   id: string
@@ -9,16 +15,53 @@ export interface AdGroup {
   campaignName: string
   name: string
   siteUrl: string
-  /** 속한 자동입찰 세트 목록. 여러 세트에 속할 수 있으며 미배정이면 빈 배열 */
-  setIds: string[]
+  /** 이 그룹의 자동입찰 on/off. 한 번도 켠 적 없으면 false */
+  autobidEnabled: boolean
+  /**
+   * 노출 지역 — 네이버 광고 그룹의 지역 타겟이 시/도 하나면 그 code (GET /api/regions).
+   * 제한 없음(전체 노출)·여러 지역·지역 타겟 없음이면 null
+   */
+  region: string | null
+  /** 표시용 지역 이름 ("서울"). region 이 null 이면 null */
+  regionName: string | null
   /** 예상 입찰가를 조회할 기기. 미입력이면 null (서버 기본값 사용) */
   device: Device | null
+  /** 우선순위. 미입력이면 null (보통으로 동작) */
+  priority: Priority | null
+}
+
+/** 노출 지역으로 고를 수 있는 시/도 — GET /api/regions 항목. 서버 스키마: RegionRead */
+export interface Region {
+  /** API 계약값 (예: SEOUL) */
+  code: string
+  /** 표시용 (예: 서울) */
+  name: string
+}
+
+/** PUT /api/adgroups/region (모든 그룹에 적용) 응답 */
+export interface AdGroupRegionBulkResult {
+  region: string | null
+  regionName: string | null
+  /** 실제로 바뀐 그룹 수 (지역 타겟이 없는 그룹은 제외) */
+  adGroups: number
+}
+
+/** 그룹 설정 중 사용자가 바꾸는 값. 서버 스키마: AdGroupSettingPatch / AdGroupSettingApplyAll (보낸 필드만 반영) */
+export type AdGroupSettingPatch = Partial<
+  Pick<AdGroupSetting, "device" | "priority">
+>
+
+/** PUT /api/adgroups/settings (모든 그룹에 적용) 응답 */
+export interface AdGroupSettingApplyResult {
+  /** 값이 저장된 그룹 수 */
+  updated: number
 }
 
 /** 광고 그룹 설정 — PATCH /api/adgroups/{id}/settings 응답. 서버 스키마: AdGroupSettingRead */
 export interface AdGroupSetting {
   adGroupId: string
   device: Device | null
+  priority: Priority | null
   /** 마지막 저장 시각 (ISO) */
   updatedAt: string
 }

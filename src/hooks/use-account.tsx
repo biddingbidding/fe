@@ -55,7 +55,6 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     // 사용자 종속 데이터는 캐시에서 제거
     queryClient.removeQueries({ queryKey: ["adGroups"] })
     queryClient.removeQueries({ queryKey: ["adGroupKeywords"] })
-    queryClient.removeQueries({ queryKey: ["biddingSets"] })
   }, [queryClient])
 
   // refresh 까지 실패하면 (세션 만료) 로그아웃 상태로 전환 → ProtectedRoute 가 /login 으로 보냄
@@ -105,7 +104,6 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     )
     queryClient.removeQueries({ queryKey: ["adGroups"] })
     queryClient.removeQueries({ queryKey: ["adGroupKeywords"] })
-    queryClient.removeQueries({ queryKey: ["biddingSets"] })
   }, [queryClient])
 
   const value = useMemo(
