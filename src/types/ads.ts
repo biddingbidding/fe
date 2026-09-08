@@ -28,6 +28,40 @@ export interface AdGroup {
   device: Device | null
   /** 우선순위. 미입력이면 null (보통으로 동작) */
   priority: Priority | null
+  /** 이 그룹이 담긴 모음(GET /api/collections) id 목록 — 모음 표시 순서. 보기용 */
+  collectionIds: string[]
+}
+
+/**
+ * 광고 그룹 모음 — 그룹을 원하는 기준으로 모아 보는 보기용 묶음 (즐겨찾기).
+ * 자동입찰 값과 무관하며, 계정(customerId) 단위로 저장된다. 서버 스키마: CollectionRead
+ */
+export interface Collection {
+  id: string
+  /** 1~50자, 계정 안에서 유일 */
+  name: string
+  /** 표시 색. lib/collection 의 팔레트 키 또는 null */
+  color: string | null
+  /** 표시 순서 (0부터) */
+  sortOrder: number
+  /** 담긴 그룹 id — 담은 순서 */
+  adGroupIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** POST /api/collections. adGroupIds 를 주면 만들면서 바로 담는다. 서버 스키마: CollectionCreate */
+export interface CollectionCreate {
+  name: string
+  color?: string | null
+  adGroupIds?: string[]
+}
+
+/** PATCH /api/collections/{id}. 보낸 필드만 갱신, color 에 null 이면 색 제거. 서버 스키마: CollectionPatch */
+export interface CollectionPatch {
+  name?: string
+  color?: string | null
+  sortOrder?: number
 }
 
 /** 노출 지역으로 고를 수 있는 시/도 — GET /api/regions 항목. 서버 스키마: RegionRead */

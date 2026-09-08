@@ -148,22 +148,33 @@ export function useUpdateAdGroupSetting(customerId: string | undefined) {
   })
 }
 
+/** "모든 그룹에 적용" 의 범위 — collectionId 가 있으면 그 모음에 담긴 그룹만 */
+export interface BulkScope {
+  collectionId?: string | null
+}
+
+const inScope = (g: AdGroup, scope: BulkScope) =>
+  !scope.collectionId || g.collectionIds.includes(scope.collectionId)
+
 /**
  * 계정의 모든 광고 그룹에 같은 설정값(기기 또는 우선순위)을 저장한다 (PUT /api/adgroups/settings).
- * 낙관적으로 반영하고, 실패하면 되돌린다. 저장된 그룹 수를 돌려준다.
+ * collectionId 를 주면 그 모음에 담긴 그룹만. 낙관적으로 반영하고, 실패하면 되돌린다. 저장된 그룹 수를 돌려준다.
  */
 export function useApplySettingToAll(customerId: string | undefined) {
   const queryClient = useQueryClient()
   const key = queryKeys.adGroups(customerId ?? "")
 
   return useMutation({
-    mutationFn: async (patch: AdGroupSettingPatch) =>
-      (await api.applyAdGroupSettingToAll(patch)).updated,
-    onMutate: async (patch) => {
+    mutationFn: async ({
+      patch,
+      collectionId,
+    }: BulkScope & { patch: AdGroupSettingPatch }) =>
+      (await api.applyAdGroupSettingToAll(patch, collectionId)).updated,
+    onMutate: async ({ patch, ...scope }) => {
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData<AdGroup[]>(key)
       queryClient.setQueryData<AdGroup[]>(key, (prev) =>
-        prev?.map((g) => ({ ...g, ...patch }))
+        prev?.map((g) => (inScope(g, scope) ? { ...g, ...patch } : g))
       )
       return { previous }
     },
@@ -253,7 +264,7 @@ export function useUpdateAdGroupRegion(
 }
 
 /**
- * 계정의 모든 광고 그룹의 노출 지역을 같은 값으로 (PUT /api/adgroups/region).
+ * 계정의 모든 광고 그룹의 노출 지역을 같은 값으로 (PUT /api/adgroups/region). collectionId 를 주면 그 모음만.
  * 지역 타겟이 없는 그룹은 서버가 건너뛰므로, 낙관적으로 반영한 뒤 끝나면 목록을 다시 받아 실제 상태로 맞춘다.
  * 실제로 바뀐 그룹 수를 돌려준다.
  */
@@ -265,15 +276,20 @@ export function useApplyRegionToAll(
   const key = queryKeys.adGroups(customerId ?? "")
 
   return useMutation({
-    mutationFn: async (region: string | null) =>
-      (await api.applyRegionToAll(region)).adGroups,
-    onMutate: async (region) => {
+    mutationFn: async ({
+      region,
+      collectionId,
+    }: BulkScope & { region: string | null }) =>
+      (await api.applyRegionToAll(region, collectionId)).adGroups,
+    onMutate: async ({ region, ...scope }) => {
       await queryClient.cancelQueries({ queryKey: key })
       const previous = queryClient.getQueryData<AdGroup[]>(key)
       const regionName = regions.find((r) => r.code === region)?.name ?? null
       queryClient.setQueryData<AdGroup[]>(key, (prev) =>
         prev?.map((g) =>
-          g.region === region ? g : { ...g, region, regionName }
+          g.region === region || !inScope(g, scope)
+            ? g
+            : { ...g, region, regionName }
         )
       )
       return { previous }
@@ -291,9 +307,15 @@ export function useSyncAccount(customerId: string | undefined) {
     mutationFn: api.syncAccount,
     onSuccess: async () => {
       if (customerId) {
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.adGroups(customerId),
-        })
+        // 서버가 사라진 그룹을 모음에서도 정리하므로 모음 목록도 같이 다시 받는다
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.adGroups(customerId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.collections(customerId),
+          }),
+        ])
       }
     },
   })

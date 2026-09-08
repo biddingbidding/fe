@@ -1,9 +1,12 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react"
 import type {
   CellClickedEvent,
   CellEditRequestEvent,
   ColDef,
   GetRowIdFunc,
+  RowDataUpdatedEvent,
+  RowSelectionOptions,
+  SelectionChangedEvent,
   ValueFormatterParams,
 } from "ag-grid-community"
 import {
@@ -12,19 +15,24 @@ import {
   type CustomHeaderProps,
   type CustomOverlayProps,
 } from "ag-grid-react"
-import { ChevronDown, Search, X } from "lucide-react"
+import { ChevronDown, FolderPlus, Plus, Search, X } from "lucide-react"
 import { overlay } from "overlay-kit"
 import { toast } from "sonner"
 
 import { AdGroupDetailSheet } from "@/components/ad-group-detail-sheet"
+import { CollectionDialog } from "@/components/collection-dialog"
+import { CollectionDot, CollectionFilter } from "@/components/collection-filter"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -44,7 +52,19 @@ import {
   useUpdateAdGroupRegion,
   useUpdateAdGroupSetting,
 } from "@/hooks/use-ad-groups"
+import {
+  useCollections,
+  useCreateCollection,
+  useDeleteCollection,
+  useSetCollectionMembership,
+  useUpdateCollection,
+} from "@/hooks/use-collections"
 import { gridTheme } from "@/lib/ag-grid"
+import {
+  collectionHex,
+  collectionsOf,
+  nextCollectionColor,
+} from "@/lib/collection"
 import { DEVICE_OPTIONS, deviceLabel } from "@/lib/device"
 import { PRIORITY_OPTIONS, priorityLabel } from "@/lib/priority"
 import { regionLabel, regionOptions } from "@/lib/region"
@@ -52,6 +72,7 @@ import { errorMessage } from "@/lib/toast"
 import type {
   AdGroup,
   AdGroupSettingPatch,
+  Collection,
   Device,
   Priority,
   Region,
@@ -67,6 +88,8 @@ interface AdGroupTableProps {
 /** 오버레이에 넘기는 추가 파라미터 — 행이 0개인 이유에 따라 문구를 바꾼다 */
 interface OverlayParams {
   query: string
+  /** 선택된 모음 이름. 모음 필터 중이면 "이 모음에 담긴 그룹이 없다" 로 안내 */
+  collectionName: string | null
 }
 
 const defaultColDef: ColDef<AdGroup> = {
@@ -75,9 +98,29 @@ const defaultColDef: ColDef<AdGroup> = {
   suppressHeaderMenuButton: true,
 }
 
+/**
+ * 모음에 일괄로 담을 그룹은 체크박스로 고른다. 전체 선택은 검색·모음 필터로 걸러진 행 기준.
+ * 행 클릭은 상세 시트를 여는 데 쓰므로 체크박스로만 선택한다.
+ */
+const rowSelection: RowSelectionOptions<AdGroup> = {
+  mode: "multiRow",
+  checkboxes: true,
+  headerCheckbox: true,
+  selectAll: "filtered",
+  enableClickSelection: false,
+}
+
+const selectionColumnDef: ColDef<AdGroup> = {
+  width: 44,
+  resizable: false,
+  suppressMovable: true,
+}
+
 /** 클릭해도 상세 시트를 열지 않는 열 — 스위치·편집 셀은 클릭이 조작이다 */
 const INTERACTIVE_COLS = new Set([
+  "ag-Grid-SelectionColumn",
   "autobidEnabled",
+  "collections",
   "region",
   "device",
   "priority",
@@ -159,12 +202,88 @@ function EnabledCell({
   )
 }
 
+interface CollectionsCellParams {
+  collections: Collection[]
+  /** 그룹을 모음에 담거나(member=true) 뺀다 */
+  onToggle: (group: AdGroup, collection: Collection, member: boolean) => void
+  /** 이 그룹을 담은 새 모음 만들기 */
+  onCreateWith: (group: AdGroup) => void
+}
+
+/**
+ * "모음" 셀 — 그룹이 담긴 모음을 색 배지로 보여 주고, 클릭하면 체크 목록으로 담기/빼기.
+ * 모음이 하나도 없으면 + 만 보인다.
+ */
+function CollectionsCell({
+  data,
+  collections,
+  onToggle,
+  onCreateWith,
+}: CustomCellRendererProps<AdGroup, string[]> & CollectionsCellParams) {
+  if (!data) return null
+  const mine = collectionsOf(data, collections)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            className="flex h-full w-full items-center gap-1 overflow-hidden text-left outline-none"
+            aria-label={`${data.name} 모음`}
+          />
+        }
+      >
+        {mine.length === 0 ? (
+          <Plus className="size-3.5 text-muted-foreground/60" />
+        ) : (
+          mine.map((c) => (
+            <Badge
+              key={c.id}
+              variant="secondary"
+              className="max-w-28 truncate text-white"
+              style={{ backgroundColor: collectionHex(c.color) }}
+            >
+              {c.name}
+            </Badge>
+          ))
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+        {collections.length > 0 && (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>담을 모음</DropdownMenuLabel>
+            {collections.map((c) => {
+              const member = data.collectionIds.includes(c.id)
+              return (
+                <DropdownMenuCheckboxItem
+                  key={c.id}
+                  checked={member}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) => onToggle(data, c, checked)}
+                >
+                  <CollectionDot color={c.color} />
+                  <span className="truncate">{c.name}</span>
+                </DropdownMenuCheckboxItem>
+              )
+            })}
+          </DropdownMenuGroup>
+        )}
+        {collections.length > 0 && <DropdownMenuSeparator />}
+        <DropdownMenuItem onClick={() => onCreateWith(data)}>
+          <Plus />새 모음 만들기
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 // 현재 API(AdGroup)로 받을 수 있는 필드만 컬럼으로 둔다.
 // 지역·기기·우선순위 열은 편집 가능(더블클릭/Enter). 셀렉트 에디터는 null 을 못 다루므로 미입력은 "" 로 두고
 // 저장 시점(handleCellEditRequest)에 null 로 되돌린다.
 // 콜백과 지역 목록을 헤더/셀에 넘겨야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
 const buildColumnDefs = (
   enabledCell: EnabledCellParams,
+  collectionsCell: CollectionsCellParams,
   regions: Region[],
   regionHeader: ApplyAllHeaderParams<string | null>,
   deviceHeader: ApplyAllHeaderParams<Device | null>,
@@ -179,6 +298,19 @@ const buildColumnDefs = (
   },
   { field: "campaignName", headerName: "캠페인명", flex: 1, minWidth: 160 },
   { field: "name", headerName: "그룹명", flex: 1, minWidth: 160 },
+  {
+    colId: "collections",
+    headerName: "모음",
+    width: 150,
+    sortable: false,
+    cellRenderer: CollectionsCell,
+    cellRendererParams: collectionsCell,
+    // 모음 이름으로도 검색되게 (quickFilter 는 valueGetter 값을 본다)
+    valueGetter: ({ data }) =>
+      data ? collectionsOf(data, collectionsCell.collections).map((c) => c.name) : [],
+    getQuickFilterText: ({ value }) =>
+      Array.isArray(value) ? value.join(" ") : "",
+  },
   {
     field: "siteUrl",
     headerName: "사이트주소",
@@ -239,6 +371,7 @@ const getRowId: GetRowIdFunc<AdGroup> = ({ data }) => data.id
 function GridOverlay({
   overlayType,
   query,
+  collectionName,
 }: CustomOverlayProps<AdGroup> & OverlayParams) {
   let message: string
   switch (overlayType) {
@@ -246,7 +379,9 @@ function GridOverlay({
       message = "불러오는 중..."
       break
     case "noRows":
-      message = "[계정 동기화] 버튼을 눌러 캠페인과 광고 그룹을 불러오세요."
+      message = collectionName
+        ? `"${collectionName}" 모음에 담긴 그룹이 없습니다. 그룹의 모음 열에서 담을 수 있습니다.`
+        : "[계정 동기화] 버튼을 눌러 캠페인과 광고 그룹을 불러오세요."
       break
     case "noMatchingRows":
       message = query ? "검색 결과가 없습니다." : "광고 그룹이 없습니다."
@@ -276,10 +411,44 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     regions
   )
   const { mutate: updateEnabled } = useUpdateAdGroupEnabled(customerId)
+  const { data: collections = [] } = useCollections(customerId)
+  const { mutateAsync: createCollection } = useCreateCollection(customerId)
+  const { mutateAsync: updateCollection } = useUpdateCollection(customerId)
+  const { mutate: deleteCollection } = useDeleteCollection(customerId)
+  const setMembership = useSetCollectionMembership(customerId)
+  const { mutate: toggleMembership } = setMembership
+
+  const gridRef = useRef<AgGridReact<AdGroup>>(null)
+  // 툴바 버튼 활성화·개수 표시용. 실제 대상 행은 클릭 시점에 그리드에서 다시 읽는다.
+  const [selectedCount, setSelectedCount] = useState(0)
+  function syncSelectedCount({
+    api,
+  }: SelectionChangedEvent<AdGroup> | RowDataUpdatedEvent<AdGroup>) {
+    setSelectedCount(api.getSelectedNodes().length)
+  }
 
   const [search, setSearch] = useState("")
   const query = search.trim()
-  const overlayParams = useMemo<OverlayParams>(() => ({ query }), [query])
+
+  // 모음 필터 — 선택된 모음에 담긴 그룹만 그리드에 넣는다 (서버는 collectionIds 만 주고 필터는 프론트 몫).
+  // 선택한 모음이 삭제되면 전체로 돌아간다.
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const selectedCollection =
+    collections.find((c) => c.id === selectedCollectionId) ?? null
+  const scopeId = selectedCollection?.id ?? null
+  const visibleGroups = useMemo(
+    () =>
+      scopeId ? groups.filter((g) => g.collectionIds.includes(scopeId)) : groups,
+    [groups, scopeId]
+  )
+  /** "모든 그룹에 적용" 확인 문구용 — 모음 필터 중이면 그 모음 이름과 그룹 수 */
+  const scopeLabel = selectedCollection
+    ? `"${selectedCollection.name}" 모음의 그룹`
+    : "광고 그룹"
+  const overlayParams = useMemo<OverlayParams>(
+    () => ({ query, collectionName: selectedCollection?.name ?? null }),
+    [query, selectedCollection?.name]
+  )
 
   /** 스위치·편집 셀을 제외한 셀 클릭은 상세 시트를 연다 */
   function handleCellClicked(e: CellClickedEvent<AdGroup>) {
@@ -351,27 +520,33 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     [updateEnabled]
   )
 
-  /** 계정의 모든 그룹의 설정(기기 또는 우선순위)을 덮어쓰므로 확인을 받고 실행한다 */
+  /**
+   * 그룹 설정(기기 또는 우선순위)을 덮어쓰므로 확인을 받고 실행한다.
+   * 모음 필터 중이면 그 모음에 담긴 그룹만 (서버 collectionId 범위).
+   */
   const applySettingAll = useCallback(
     (name: string, patch: AdGroupSettingPatch, label: string) => {
-      if (groups.length === 0) return
+      if (visibleGroups.length === 0) return
       overlay.open(({ isOpen, close, unmount }) => (
         <ConfirmDialog
           isOpen={isOpen}
           close={close}
           unmount={unmount}
-          title={`모든 그룹에 ${name}를 적용할까요?`}
+          title={`${scopeId ? "이 모음의 모든 그룹" : "모든 그룹"}에 ${name}를 적용할까요?`}
           description={
             <>
-              광고 그룹 <b>{groups.length}개</b>의 {name}가 <b>{label}</b>(으)로
-              저장됩니다.
+              {scopeLabel} <b>{visibleGroups.length}개</b>의 {name}가{" "}
+              <b>{label}</b>(으)로 저장됩니다.
             </>
           }
           confirmLabel="적용"
           pendingLabel="적용 중..."
           onConfirm={async () => {
             // 실패하면 ConfirmDialog 가 에러를 다이얼로그 안에 보여준다
-            const updated = await applySettingToAll(patch)
+            const updated = await applySettingToAll({
+              patch,
+              collectionId: scopeId,
+            })
             toast.success(
               `그룹 ${updated}개의 ${name}를 ${label}(으)로 저장했습니다.`
             )
@@ -379,7 +554,7 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
         />
       ))
     },
-    [groups.length, applySettingToAll]
+    [visibleGroups.length, scopeId, scopeLabel, applySettingToAll]
   )
 
   const handleApplyDeviceAll = useCallback(
@@ -394,28 +569,31 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     [applySettingAll]
   )
 
-  /** 계정의 모든 그룹의 네이버 지역 타겟을 바꾸므로 확인을 받고 실행한다 */
+  /** 그룹들의 네이버 지역 타겟을 바꾸므로 확인을 받고 실행한다. 모음 필터 중이면 그 모음만 */
   const handleApplyRegionAll = useCallback(
     (region: string | null) => {
-      if (groups.length === 0) return
+      if (visibleGroups.length === 0) return
       const label = regionLabel(regions, region)
       overlay.open(({ isOpen, close, unmount }) => (
         <ConfirmDialog
           isOpen={isOpen}
           close={close}
           unmount={unmount}
-          title="모든 그룹에 지역을 적용할까요?"
+          title={`${scopeId ? "이 모음의 모든 그룹" : "모든 그룹"}에 지역을 적용할까요?`}
           description={
             <>
-              광고 그룹 <b>{groups.length}개</b>의 노출 지역이 <b>{label}</b>
-              (으)로 바뀝니다. 네이버 광고 그룹의 지역 타겟이 직접 변경되며,
-              지역 타겟이 없는 그룹은 건너뜁니다.
+              {scopeLabel} <b>{visibleGroups.length}개</b>의 노출 지역이{" "}
+              <b>{label}</b>(으)로 바뀝니다. 네이버 광고 그룹의 지역 타겟이 직접
+              변경되며, 지역 타겟이 없는 그룹은 건너뜁니다.
             </>
           }
           confirmLabel="적용"
           pendingLabel="적용 중..."
           onConfirm={async () => {
-            const applied = await applyRegionToAll(region)
+            const applied = await applyRegionToAll({
+              region,
+              collectionId: scopeId,
+            })
             toast.success(
               `그룹 ${applied}개의 지역을 ${label}(으)로 바꿨습니다.`
             )
@@ -423,13 +601,174 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
         />
       ))
     },
-    [groups.length, regions, applyRegionToAll]
+    [visibleGroups.length, scopeId, scopeLabel, regions, applyRegionToAll]
   )
+
+  // ── 모음(즐겨찾기) ──────────────────────────────────────────
+
+  /**
+   * 새 모음 만들기. 그룹을 주면 그 그룹들을 담은 채로 만든다. 만든 뒤 필터를 그 모음으로 옮기지는 않는다.
+   * onCreated 는 성공 뒤 후처리 (예: 그리드 선택 해제).
+   */
+  const openCreateCollection = useCallback(
+    (withGroups: AdGroup[] = [], onCreated?: () => void) => {
+      overlay.open(({ isOpen, close, unmount }) => (
+        <CollectionDialog
+          isOpen={isOpen}
+          close={close}
+          unmount={unmount}
+          mode="create"
+          count={withGroups.length}
+          initial={{ name: "", color: nextCollectionColor(collections) }}
+          onSubmit={async ({ name, color }) => {
+            const created = await createCollection({
+              name,
+              color,
+              adGroupIds: withGroups.map((g) => g.id),
+            })
+            toast.success(
+              withGroups.length === 1
+                ? `"${created.name}" 모음을 만들고 ${withGroups[0].name} 그룹을 담았습니다.`
+                : withGroups.length > 1
+                  ? `"${created.name}" 모음을 만들고 그룹 ${withGroups.length}개를 담았습니다.`
+                  : `"${created.name}" 모음을 만들었습니다.`
+            )
+            onCreated?.()
+          }}
+        />
+      ))
+    },
+    [collections, createCollection]
+  )
+
+  const handleEditCollection = useCallback(
+    (collection: Collection) => {
+      overlay.open(({ isOpen, close, unmount }) => (
+        <CollectionDialog
+          isOpen={isOpen}
+          close={close}
+          unmount={unmount}
+          mode="edit"
+          initial={{ name: collection.name, color: collection.color }}
+          onSubmit={async ({ name, color }) => {
+            const patch: { name?: string; color?: string | null } = {}
+            if (name !== collection.name) patch.name = name
+            if (color !== collection.color) patch.color = color
+            if (Object.keys(patch).length === 0) return
+            await updateCollection({ id: collection.id, patch })
+          }}
+        />
+      ))
+    },
+    [updateCollection]
+  )
+
+  /** 모음 삭제 — 담긴 그룹의 설정·토글은 그대로라 확인만 받는다 */
+  const handleDeleteCollection = useCallback(
+    (collection: Collection) => {
+      overlay.open(({ isOpen, close, unmount }) => (
+        <ConfirmDialog
+          isOpen={isOpen}
+          close={close}
+          unmount={unmount}
+          destructive
+          title={`"${collection.name}" 모음을 삭제할까요?`}
+          description={
+            <>
+              모음만 없어지고, 담긴 그룹 <b>{collection.adGroupIds.length}개</b>
+              의 자동입찰 설정은 그대로 유지됩니다.
+            </>
+          }
+          confirmLabel="삭제"
+          onConfirm={() => {
+            deleteCollection(collection.id, {
+              onSuccess: () =>
+                toast.success(`"${collection.name}" 모음을 삭제했습니다.`),
+              onError: (err) =>
+                toast.error(errorMessage(err, "모음을 삭제하지 못했습니다.")),
+            })
+            return Promise.resolve()
+          }}
+        />
+      ))
+    },
+    [deleteCollection]
+  )
+
+  /** 그룹 하나를 모음에 담기/빼기 (모음 셀). 낙관적으로 반영되고 실패하면 훅이 되돌리므로 알림만 */
+  const handleToggleMembership = useCallback(
+    (group: AdGroup, collection: Collection, member: boolean) => {
+      toggleMembership(
+        { collectionId: collection.id, adGroupIds: [group.id], member },
+        {
+          onError: (err) =>
+            toast.error(
+              errorMessage(
+                err,
+                `${group.name} 그룹을 "${collection.name}" 모음에 ${member ? "담지" : "서 빼지"} 못했습니다.`
+              )
+            ),
+        }
+      )
+    },
+    [toggleMembership]
+  )
+
+  /** 체크한 그룹들을 모음에 한 번에 담거나(member=true) 뺀다. 끝나면 선택을 푼다 */
+  const handleBulkMembership = useCallback(
+    (collection: Collection, member: boolean) => {
+      const api = gridRef.current?.api
+      const targets = api?.getSelectedRows() ?? []
+      if (targets.length === 0) return
+      toggleMembership(
+        {
+          collectionId: collection.id,
+          adGroupIds: targets.map((g) => g.id),
+          member,
+        },
+        {
+          onSuccess: (_updated, _vars, ctx) => {
+            const changed = ctx?.changed ?? targets.length
+            toast.success(
+              member
+                ? `그룹 ${changed}개를 "${collection.name}" 모음에 담았습니다.` +
+                    (changed < targets.length
+                      ? ` (이미 담긴 ${targets.length - changed}개 제외)`
+                      : "")
+                : `그룹 ${changed}개를 "${collection.name}" 모음에서 뺐습니다.`
+            )
+            api?.deselectAll()
+          },
+          onError: (err) =>
+            toast.error(
+              errorMessage(
+                err,
+                `선택한 그룹을 "${collection.name}" 모음에 ${member ? "담지" : "서 빼지"} 못했습니다.`
+              )
+            ),
+        }
+      )
+    },
+    [toggleMembership]
+  )
+
+  /** 체크한 그룹들을 담은 새 모음 만들기 */
+  const handleBulkCreateCollection = useCallback(() => {
+    const api = gridRef.current?.api
+    const targets = api?.getSelectedRows() ?? []
+    if (targets.length === 0) return
+    openCreateCollection(targets, () => api?.deselectAll())
+  }, [openCreateCollection])
 
   const columnDefs = useMemo(
     () =>
       buildColumnDefs(
         { onToggle: handleToggle },
+        {
+          collections,
+          onToggle: handleToggleMembership,
+          onCreateWith: (group: AdGroup) => openCreateCollection([group]),
+        },
         regions,
         { options: regionOptions(regions), onApplyAll: handleApplyRegionAll },
         { options: DEVICE_OPTIONS, onApplyAll: handleApplyDeviceAll },
@@ -437,6 +776,9 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
       ),
     [
       handleToggle,
+      collections,
+      handleToggleMembership,
+      openCreateCollection,
       regions,
       handleApplyRegionAll,
       handleApplyDeviceAll,
@@ -469,17 +811,87 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
             </InputGroupAddon>
           )}
         </InputGroup>
-        {actions}
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="outline"
+                  disabled={selectedCount === 0 || setMembership.isPending}
+                />
+              }
+            >
+              <FolderPlus />
+              모음에 담기
+              {selectedCount > 0 && (
+                <Badge variant="secondary" className="tabular-nums">
+                  {selectedCount}
+                </Badge>
+              )}
+              <ChevronDown className="text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="max-h-80 w-56 overflow-y-auto"
+            >
+              {collections.length > 0 && (
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>선택한 그룹 {selectedCount}개를 담을 모음</DropdownMenuLabel>
+                  {collections.map((c) => (
+                    <DropdownMenuItem
+                      key={c.id}
+                      onClick={() => handleBulkMembership(c, true)}
+                    >
+                      <CollectionDot color={c.color} />
+                      <span className="truncate">{c.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+              )}
+              {collections.length > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuItem onClick={handleBulkCreateCollection}>
+                <Plus />새 모음 만들기
+              </DropdownMenuItem>
+              {selectedCollection && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => handleBulkMembership(selectedCollection, false)}
+                  >
+                    <X />"{selectedCollection.name}" 모음에서 빼기
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {actions}
+        </div>
       </div>
+
+      <CollectionFilter
+        collections={collections}
+        selected={scopeId}
+        onSelect={setSelectedCollectionId}
+        total={groups.length}
+        onCreate={() => openCreateCollection()}
+        onEdit={handleEditCollection}
+        onDelete={handleDeleteCollection}
+      />
 
       {/* 남은 높이를 모두 차지하고 그리드 안에서 세로 스크롤한다 (행 가상화) */}
       <div className="min-h-80 flex-1">
         <AgGridReact<AdGroup>
+          ref={gridRef}
           theme={gridTheme}
-          rowData={groups}
+          rowData={visibleGroups}
           getRowId={getRowId}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          rowSelection={rowSelection}
+          selectionColumnDef={selectionColumnDef}
+          onSelectionChanged={syncSelectedCount}
+          onRowDataUpdated={syncSelectedCount}
           onCellClicked={handleCellClicked}
           quickFilterText={query}
           loading={loading}
