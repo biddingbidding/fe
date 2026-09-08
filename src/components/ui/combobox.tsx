@@ -49,6 +49,30 @@ function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   )
 }
 
+/**
+ * 입력창 위에서 굴린 휠을 열린 목록의 스크롤로 넘긴다.
+ * 입력창을 클릭해 열면 커서가 입력창 위에 남는데, 그 자리에서 휠을 굴리면 이벤트가 입력창으로 가서
+ * 목록은 안 움직이고 뒤 화면만 움직인다(또는 아무 일도 없다). 열린 목록은 입력창의 aria-controls 로 찾는다.
+ * React 의 onWheel 은 passive 라 preventDefault 가 안 먹으므로 네이티브 리스너를 단다.
+ */
+function useForwardWheelToList() {
+  const ref = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const listId = el.querySelector("input")?.getAttribute("aria-controls")
+      const list = listId ? document.getElementById(listId) : null
+      if (!list || list.scrollHeight <= list.clientHeight) return
+      list.scrollTop += e.deltaY
+      e.preventDefault()
+    }
+    el.addEventListener("wheel", onWheel, { passive: false })
+    return () => el.removeEventListener("wheel", onWheel)
+  }, [])
+  return ref
+}
+
 function ComboboxInput({
   className,
   children,
@@ -60,8 +84,9 @@ function ComboboxInput({
   showTrigger?: boolean
   showClear?: boolean
 }) {
+  const groupRef = useForwardWheelToList()
   return (
-    <InputGroup className={cn("w-auto", className)}>
+    <InputGroup ref={groupRef} className={cn("w-auto", className)}>
       <ComboboxPrimitive.Input
         render={<InputGroupInput disabled={disabled} />}
         {...props}
