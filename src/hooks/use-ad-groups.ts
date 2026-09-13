@@ -29,14 +29,21 @@ export function useRegions(enabled: boolean) {
   })
 }
 
-/** 광고 그룹의 키워드 목록 (+ 입찰 설정, period 기간 통계). adGroupId 가 없으면 조회하지 않는다. */
+/**
+ * 광고 그룹의 키워드 목록 (+ 입찰 설정, period 기간 통계, 자동입찰 상태). adGroupId 가 없으면 조회하지 않는다.
+ * autobidOnly 가 true 면 자동입찰 대상으로 등록된 키워드만 (자동 입찰 페이지의 큐 항목 화면용).
+ */
 export function useAdGroupKeywords(
   adGroupId: string | null,
-  period: StatsPeriod = "last7days"
+  period: StatsPeriod = "last7days",
+  autobidOnly = false
 ) {
   return useQuery({
-    queryKey: queryKeys.adGroupKeywords(adGroupId ?? "", period),
-    queryFn: () => api.getAdGroupKeywords(adGroupId!, period),
+    queryKey: queryKeys.adGroupKeywords(adGroupId ?? "", {
+      period,
+      autobidOnly,
+    }),
+    queryFn: () => api.getAdGroupKeywords(adGroupId!, period, autobidOnly),
     enabled: !!adGroupId,
     staleTime: 60_000,
   })
@@ -188,10 +195,20 @@ export function useApplySettingToAll(customerId: string | undefined) {
  * 광고 그룹 하나의 자동입찰 on/off (PATCH /api/adgroups/{id}).
  * 토글이 즉시 반응하도록 낙관적으로 반영하고, 실패하면 되돌린다.
  * 켜면 서버가 키워드를 자동입찰 대상으로 등록하므로 응답을 캐시에 그대로 반영한다.
+ * 큐 = 켜진 그룹 집합이라 끝나면 자동입찰 큐·현황 캐시도 무효화한다.
  */
 export function useUpdateAdGroupEnabled(customerId: string | undefined) {
   const queryClient = useQueryClient()
   const key = queryKeys.adGroups(customerId ?? "")
+  const invalidateAutobid = () =>
+    Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.autobidQueue(customerId ?? ""),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.autobidStatus(customerId ?? ""),
+      }),
+    ])
 
   return useMutation({
     mutationFn: ({
@@ -219,6 +236,7 @@ export function useUpdateAdGroupEnabled(customerId: string | undefined) {
         prev?.map((g) => (g.id === group.id ? group : g))
       )
     },
+    onSettled: () => invalidateAutobid(),
   })
 }
 
@@ -301,19 +319,26 @@ export function useApplyRegionToAll(
   })
 }
 
+/** 계정 동기화. 네이버에서 사라진 그룹의 토글도 정리되므로 그룹 목록과 자동입찰 큐·현황을 함께 다시 받는다. */
 export function useSyncAccount(customerId: string | undefined) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: api.syncAccount,
     onSuccess: async () => {
       if (customerId) {
-        // 서버가 사라진 그룹을 모음에서도 정리하므로 모음 목록도 같이 다시 받는다
+        // 서버가 사라진 그룹을 모음·자동입찰 큐에서도 정리하므로 모음 목록과 큐·현황도 같이 다시 받는다
         await Promise.all([
           queryClient.invalidateQueries({
             queryKey: queryKeys.adGroups(customerId),
           }),
           queryClient.invalidateQueries({
             queryKey: queryKeys.collections(customerId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.autobidQueue(customerId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.autobidStatus(customerId),
           }),
         ])
       }

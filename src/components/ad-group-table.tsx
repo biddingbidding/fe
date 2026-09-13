@@ -1,18 +1,16 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react"
-import type {
-  CellClickedEvent,
-  CellEditRequestEvent,
-  ColDef,
-  GetRowIdFunc,
-  RowDataUpdatedEvent,
-  RowSelectionOptions,
-  SelectionChangedEvent,
-  ValueFormatterParams,
+import {
+  SELECTION_COLUMN_ID,
+  type CellClickedEvent,
+  type ColDef,
+  type GetRowIdFunc,
+  type RowDataUpdatedEvent,
+  type RowSelectionOptions,
+  type SelectionChangedEvent,
 } from "ag-grid-community"
 import {
   AgGridReact,
   type CustomCellRendererProps,
-  type CustomHeaderProps,
   type CustomOverlayProps,
 } from "ag-grid-react"
 import { ChevronDown, FolderPlus, Plus, Search, X } from "lucide-react"
@@ -20,6 +18,8 @@ import { overlay } from "overlay-kit"
 import { toast } from "sonner"
 
 import { AdGroupDetailSheet } from "@/components/ad-group-detail-sheet"
+import { AdStatusCell } from "@/components/ad-status-cell"
+import { BiddingStateCell } from "@/components/bidding-state-cell"
 import { CollectionDialog } from "@/components/collection-dialog"
 import { CollectionDot, CollectionFilter } from "@/components/collection-filter"
 import { ConfirmDialog } from "@/components/confirm-dialog"
@@ -43,15 +43,8 @@ import {
 } from "@/components/ui/input-group"
 import { Switch } from "@/components/ui/switch"
 import { useAccount } from "@/hooks/use-account"
-import {
-  useAdGroups,
-  useApplyRegionToAll,
-  useApplySettingToAll,
-  useRegions,
-  useUpdateAdGroupEnabled,
-  useUpdateAdGroupRegion,
-  useUpdateAdGroupSetting,
-} from "@/hooks/use-ad-groups"
+import { useAdGroups } from "@/hooks/use-ad-groups"
+import { useSetQueueMembership } from "@/hooks/use-autobid"
 import {
   useCollections,
   useCreateCollection,
@@ -59,24 +52,16 @@ import {
   useSetCollectionMembership,
   useUpdateCollection,
 } from "@/hooks/use-collections"
-import { gridTheme } from "@/lib/ag-grid"
+import { adStatusLabel } from "@/lib/ad-status"
+import { gridTheme, refreshRowNumbers, rowNumberColDef } from "@/lib/ag-grid"
+import { biddingStateLabel } from "@/lib/bidding-state"
 import {
   collectionHex,
   collectionsOf,
   nextCollectionColor,
 } from "@/lib/collection"
-import { DEVICE_OPTIONS, deviceLabel } from "@/lib/device"
-import { PRIORITY_OPTIONS, priorityLabel } from "@/lib/priority"
-import { regionLabel, regionOptions } from "@/lib/region"
 import { errorMessage } from "@/lib/toast"
-import type {
-  AdGroup,
-  AdGroupSettingPatch,
-  Collection,
-  Device,
-  Priority,
-  Region,
-} from "@/types/ads"
+import type { AdGroup, Collection } from "@/types/ads"
 
 interface AdGroupTableProps {
   /** 계정 동기화 진행 중이면 빈 테이블에 안내 대신 로딩 문구를 보인다 */
@@ -116,87 +101,26 @@ const selectionColumnDef: ColDef<AdGroup> = {
   suppressMovable: true,
 }
 
-/** 클릭해도 상세 시트를 열지 않는 열 — 스위치·편집 셀은 클릭이 조작이다 */
-const INTERACTIVE_COLS = new Set([
-  "ag-Grid-SelectionColumn",
-  "autobidEnabled",
-  "collections",
-  "region",
-  "device",
-  "priority",
-])
+/** 클릭해도 상세 시트를 열지 않는 열 — 체크박스·스위치·모음 드롭다운은 클릭이 조작이다 */
+const INTERACTIVE_COLS = new Set([SELECTION_COLUMN_ID, "queued", "collections"])
 
-interface ApplyAllHeaderParams<T> {
-  /** 드롭다운에 나열할 값들 */
-  options: { value: T; label: string }[]
-  onApplyAll: (value: T) => void
+interface QueuedCellParams {
+  onToggle: (group: AdGroup, queued: boolean) => void
 }
 
-/**
- * "지역"/"기기"/"우선순위" 컬럼 헤더 — 라벨 오른쪽의 화살표로 모든 그룹에 일괄 적용하는 드롭다운을 연다.
- * 헤더 안의 클릭이 컬럼 드래그로 새지 않도록 pointerdown 전파를 막는다.
- */
-function ApplyAllHeader<T>({
-  displayName,
-  options,
-  onApplyAll,
-}: CustomHeaderProps<AdGroup> & ApplyAllHeaderParams<T>) {
-  return (
-    <div className="flex w-full items-center gap-0.5">
-      <span>{displayName}</span>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              onPointerDown={(e) => e.stopPropagation()}
-              aria-label={`${displayName} 일괄 적용`}
-            />
-          }
-        >
-          <ChevronDown />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="max-h-80 w-52 overflow-y-auto"
-        >
-          {/* GroupLabel 은 반드시 Group 안에 있어야 한다 (Base UI 가 컨텍스트 없으면 throw) */}
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>모든 그룹에 적용</DropdownMenuLabel>
-            {options.map((o) => (
-              <DropdownMenuItem
-                key={o.label}
-                onClick={() => onApplyAll(o.value)}
-              >
-                {o.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  )
-}
-
-interface EnabledCellParams {
-  onToggle: (group: AdGroup, enabled: boolean) => void
-}
-
-/** "자동입찰" 셀 — 그룹별 on/off 스위치 */
-function EnabledCell({
+/** "대기열" 셀 — 켜면 그룹이 자동입찰 큐에 들어간다(입찰은 자동 입찰 페이지에서 따로 시작). 끄면 빠지고 입찰 중이었으면 멈춘다 */
+function QueuedCell({
   data,
   onToggle,
-}: CustomCellRendererProps<AdGroup, boolean> & EnabledCellParams) {
+}: CustomCellRendererProps<AdGroup, boolean> & QueuedCellParams) {
   if (!data) return null
   return (
-    <div className="flex h-full items-center">
+    <div className="flex h-full items-center justify-center">
       <Switch
         size="sm"
-        checked={data.autobidEnabled}
+        checked={data.queued}
         onCheckedChange={(checked) => onToggle(data, checked)}
-        aria-label={`${data.name} 자동입찰`}
+        aria-label={`${data.name} 대기열`}
       />
     </div>
   )
@@ -248,7 +172,10 @@ function CollectionsCell({
           ))
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+      <DropdownMenuContent
+        align="start"
+        className="max-h-80 w-56 overflow-y-auto"
+      >
         {collections.length > 0 && (
           <DropdownMenuGroup>
             <DropdownMenuLabel>담을 모음</DropdownMenuLabel>
@@ -277,25 +204,14 @@ function CollectionsCell({
   )
 }
 
-// 현재 API(AdGroup)로 받을 수 있는 필드만 컬럼으로 둔다.
-// 지역·기기·우선순위 열은 편집 가능(더블클릭/Enter). 셀렉트 에디터는 null 을 못 다루므로 미입력은 "" 로 두고
-// 저장 시점(handleCellEditRequest)에 null 로 되돌린다.
-// 콜백과 지역 목록을 헤더/셀에 넘겨야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
+// 현재 API(AdGroup)로 받을 수 있는 필드만 컬럼으로 둔다. 지역·기기·우선순위는 상세 시트에서 본다.
+// 대기열(queued)과 입찰 상태(autobidEnabled)는 별개 — 대기열은 여기서 켜고, 입찰 시작/중지는 자동 입찰 페이지에서 한다.
+// 콜백과 모음 목록을 셀에 넘겨야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
 const buildColumnDefs = (
-  enabledCell: EnabledCellParams,
-  collectionsCell: CollectionsCellParams,
-  regions: Region[],
-  regionHeader: ApplyAllHeaderParams<string | null>,
-  deviceHeader: ApplyAllHeaderParams<Device | null>,
-  priorityHeader: ApplyAllHeaderParams<Priority | null>
+  queuedCell: QueuedCellParams,
+  collectionsCell: CollectionsCellParams
 ): ColDef<AdGroup>[] => [
-  {
-    field: "autobidEnabled",
-    headerName: "자동입찰",
-    width: 96,
-    cellRenderer: EnabledCell,
-    cellRendererParams: enabledCell,
-  },
+  rowNumberColDef<AdGroup>(),
   { field: "campaignName", headerName: "캠페인명", flex: 1, minWidth: 160 },
   { field: "name", headerName: "그룹명", flex: 1, minWidth: 160 },
   {
@@ -307,7 +223,9 @@ const buildColumnDefs = (
     cellRendererParams: collectionsCell,
     // 모음 이름으로도 검색되게 (quickFilter 는 valueGetter 값을 본다)
     valueGetter: ({ data }) =>
-      data ? collectionsOf(data, collectionsCell.collections).map((c) => c.name) : [],
+      data
+        ? collectionsOf(data, collectionsCell.collections).map((c) => c.name)
+        : [],
     getQuickFilterText: ({ value }) =>
       Array.isArray(value) ? value.join(" ") : "",
   },
@@ -318,51 +236,35 @@ const buildColumnDefs = (
     minWidth: 200,
     cellStyle: { color: "var(--muted-foreground)" },
   },
+  // 상태 열은 오른쪽 끝에 광고 상태 → 입찰 상태 → 대기열 순으로 둔다.
+  // 광고 상태(네이버 노출 가능 여부)와 입찰 상태를 나란히 두어 "입찰은 켰는데 광고가 꺼져 있는" 그룹을 바로 알 수 있게 한다.
   {
-    colId: "region",
-    headerName: "지역",
-    width: 110,
-    cellClass: "bg-primary/8",
-    editable: true,
-    // 커스텀 헤더에는 정렬 UI 가 없다 — 드롭다운 클릭과 겹치지 않게 정렬은 끈다
-    sortable: false,
-    headerComponent: ApplyAllHeader,
-    headerComponentParams: regionHeader,
-    valueGetter: ({ data }) => data?.region ?? "",
-    valueFormatter: ({ value }: ValueFormatterParams<AdGroup, string>) =>
-      regionLabel(regions, value || null),
-    cellEditor: "agSelectCellEditor",
-    cellEditorParams: { values: ["", ...regions.map((r) => r.code)] },
+    // 광고 상태 — 읽기 전용
+    colId: "adStatus",
+    headerName: "광고 상태",
+    width: 170,
+    valueGetter: ({ data }) => (data ? adStatusLabel(data) : ""),
+    tooltipValueGetter: ({ data }) => (data ? adStatusLabel(data) : undefined),
+    cellRenderer: AdStatusCell,
   },
   {
-    colId: "device",
-    headerName: "기기",
-    width: 110,
-    cellClass: "bg-primary/8",
-    editable: true,
-    sortable: false,
-    headerComponent: ApplyAllHeader,
-    headerComponentParams: deviceHeader,
-    valueGetter: ({ data }) => data?.device ?? "",
-    valueFormatter: ({ value }: ValueFormatterParams<AdGroup, Device | "">) =>
-      deviceLabel(value || null),
-    cellEditor: "agSelectCellEditor",
-    cellEditorParams: { values: ["", "PC", "MOBILE"] },
+    // 입찰 상태 — 읽기 전용 표시. 시작/중지는 자동 입찰 페이지의 버튼으로
+    colId: "biddingState",
+    headerName: "입찰 상태",
+    width: 100,
+    valueGetter: ({ data }) =>
+      data ? biddingStateLabel(data.autobidEnabled) : "",
+    cellRenderer: BiddingStateCell,
   },
   {
-    colId: "priority",
-    headerName: "우선순위",
-    width: 110,
-    cellClass: "bg-primary/8",
-    editable: true,
-    sortable: false,
-    headerComponent: ApplyAllHeader,
-    headerComponentParams: priorityHeader,
-    valueGetter: ({ data }) => data?.priority ?? "",
-    valueFormatter: ({ value }: ValueFormatterParams<AdGroup, Priority | "">) =>
-      priorityLabel(value || null),
-    cellEditor: "agSelectCellEditor",
-    cellEditorParams: { values: ["", "HIGH", "NORMAL", "LOW"] },
+    // 대기열 스위치 — 가장 오른쪽
+    colId: "queued",
+    field: "queued",
+    headerName: "대기열",
+    headerClass: "ag-header-center",
+    width: 90,
+    cellRenderer: QueuedCell,
+    cellRendererParams: queuedCell,
   },
 ]
 
@@ -393,8 +295,9 @@ function GridOverlay({
 }
 
 /**
- * 캠페인/광고 그룹 목록. 자동입찰 열의 스위치로 그룹마다 켜고 끈다.
- * 지역·기기·우선순위 열은 셀을 더블클릭해 수정하면 즉시 저장되고, 헤더의 드롭다운으로 모든 그룹에 일괄 적용할 수도 있다.
+ * 캠페인/광고 그룹 목록. "대기열" 스위치로 그룹을 자동입찰 큐에 넣고 뺀다. 입찰 상태·광고 상태는 읽기 전용으로 보인다.
+ * 입찰 시작/중지는 자동 입찰 페이지에서 한다 (큐 소속과 입찰 상태는 별개).
+ * 모음(즐겨찾기): 필터 칩으로 걸러 보고, 모음 열이나 체크박스 선택 + [모음에 담기]로 담는다.
  * 그 외 열을 클릭하면 상세 시트가 열린다.
  */
 export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
@@ -402,15 +305,7 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
   const customerId = account?.customerId
   const { data: groups = [], isLoading } = useAdGroups(customerId)
   const loading = isLoading || (syncing && groups.length === 0)
-  const { data: regions = [] } = useRegions(!!customerId)
-  const updateSetting = useUpdateAdGroupSetting(customerId)
-  const { mutateAsync: applySettingToAll } = useApplySettingToAll(customerId)
-  const updateRegion = useUpdateAdGroupRegion(customerId, regions)
-  const { mutateAsync: applyRegionToAll } = useApplyRegionToAll(
-    customerId,
-    regions
-  )
-  const { mutate: updateEnabled } = useUpdateAdGroupEnabled(customerId)
+  const { mutate: setQueueMembership } = useSetQueueMembership(customerId)
   const { data: collections = [] } = useCollections(customerId)
   const { mutateAsync: createCollection } = useCreateCollection(customerId)
   const { mutateAsync: updateCollection } = useUpdateCollection(customerId)
@@ -432,25 +327,25 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
 
   // 모음 필터 — 선택된 모음에 담긴 그룹만 그리드에 넣는다 (서버는 collectionIds 만 주고 필터는 프론트 몫).
   // 선택한 모음이 삭제되면 전체로 돌아간다.
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const [selectedCollectionId, setSelectedCollectionId] = useState<
+    string | null
+  >(null)
   const selectedCollection =
     collections.find((c) => c.id === selectedCollectionId) ?? null
   const scopeId = selectedCollection?.id ?? null
   const visibleGroups = useMemo(
     () =>
-      scopeId ? groups.filter((g) => g.collectionIds.includes(scopeId)) : groups,
+      scopeId
+        ? groups.filter((g) => g.collectionIds.includes(scopeId))
+        : groups,
     [groups, scopeId]
   )
-  /** "모든 그룹에 적용" 확인 문구용 — 모음 필터 중이면 그 모음 이름과 그룹 수 */
-  const scopeLabel = selectedCollection
-    ? `"${selectedCollection.name}" 모음의 그룹`
-    : "광고 그룹"
   const overlayParams = useMemo<OverlayParams>(
     () => ({ query, collectionName: selectedCollection?.name ?? null }),
     [query, selectedCollection?.name]
   )
 
-  /** 스위치·편집 셀을 제외한 셀 클릭은 상세 시트를 연다 */
+  /** 체크박스·스위치·모음 셀을 제외한 셀 클릭은 상세 시트를 연다 */
   function handleCellClicked(e: CellClickedEvent<AdGroup>) {
     if (!e.data || INTERACTIVE_COLS.has(e.column.getColId())) return
     const group = e.data
@@ -464,144 +359,29 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     ))
   }
 
-  /** readOnlyEdit 이라 그리드는 요청만 보내고, 캐시를 낙관적으로 갱신하면 새 값이 다시 그려진다 */
-  function handleCellEditRequest(e: CellEditRequestEvent<AdGroup>) {
-    if (!e.data) return
-    const colId = e.column.getColId()
-    if (colId === "device") {
-      const next = (e.newValue || null) as Device | null
-      if (next === e.data.device) return
-      updateSetting.mutate(
-        { adGroupId: e.data.id, patch: { device: next } },
-        {
-          onError: (err) =>
-            toast.error(errorMessage(err, "기기를 저장하지 못했습니다.")),
-        }
-      )
-    } else if (colId === "priority") {
-      const next = (e.newValue || null) as Priority | null
-      if (next === e.data.priority) return
-      updateSetting.mutate(
-        { adGroupId: e.data.id, patch: { priority: next } },
-        {
-          onError: (err) =>
-            toast.error(errorMessage(err, "우선순위를 저장하지 못했습니다.")),
-        }
-      )
-    } else if (colId === "region") {
-      const next = (e.newValue || null) as string | null
-      if (next === e.data.region) return
-      updateRegion.mutate(
-        { adGroupId: e.data.id, region: next },
-        {
-          onError: (err) =>
-            toast.error(errorMessage(err, "지역을 저장하지 못했습니다.")),
-        }
-      )
-    }
-  }
-
-  /** 자동입찰 on/off. 실패하면 훅이 되돌리므로 여기서는 알림만 */
+  /** 대기열 스위치 — 그룹 하나를 큐에 넣거나 뺀다. 실패하면 훅이 스위치를 되돌리므로 여기서는 알림만 */
   const handleToggle = useCallback(
-    (group: AdGroup, enabled: boolean) => {
-      updateEnabled(
-        { adGroupId: group.id, enabled },
+    (group: AdGroup, queued: boolean) => {
+      setQueueMembership(
+        { adGroupId: group.id, queued },
         {
+          onSuccess: () =>
+            toast.success(
+              queued
+                ? `${group.name} 그룹을 대기열에 넣었습니다. 입찰은 자동 입찰 페이지에서 시작하세요.`
+                : `${group.name} 그룹을 대기열에서 뺐습니다.`
+            ),
           onError: (err) =>
             toast.error(
               errorMessage(
                 err,
-                `${group.name} 그룹의 자동입찰을 ${enabled ? "시작" : "정지"}하지 못했습니다.`
+                `${group.name} 그룹을 대기열에${queued ? " 넣지" : "서 빼지"} 못했습니다.`
               )
             ),
         }
       )
     },
-    [updateEnabled]
-  )
-
-  /**
-   * 그룹 설정(기기 또는 우선순위)을 덮어쓰므로 확인을 받고 실행한다.
-   * 모음 필터 중이면 그 모음에 담긴 그룹만 (서버 collectionId 범위).
-   */
-  const applySettingAll = useCallback(
-    (name: string, patch: AdGroupSettingPatch, label: string) => {
-      if (visibleGroups.length === 0) return
-      overlay.open(({ isOpen, close, unmount }) => (
-        <ConfirmDialog
-          isOpen={isOpen}
-          close={close}
-          unmount={unmount}
-          title={`${scopeId ? "이 모음의 모든 그룹" : "모든 그룹"}에 ${name}를 적용할까요?`}
-          description={
-            <>
-              {scopeLabel} <b>{visibleGroups.length}개</b>의 {name}가{" "}
-              <b>{label}</b>(으)로 저장됩니다.
-            </>
-          }
-          confirmLabel="적용"
-          pendingLabel="적용 중..."
-          onConfirm={async () => {
-            // 실패하면 ConfirmDialog 가 에러를 다이얼로그 안에 보여준다
-            const updated = await applySettingToAll({
-              patch,
-              collectionId: scopeId,
-            })
-            toast.success(
-              `그룹 ${updated}개의 ${name}를 ${label}(으)로 저장했습니다.`
-            )
-          }}
-        />
-      ))
-    },
-    [visibleGroups.length, scopeId, scopeLabel, applySettingToAll]
-  )
-
-  const handleApplyDeviceAll = useCallback(
-    (device: Device | null) =>
-      applySettingAll("기기", { device }, deviceLabel(device)),
-    [applySettingAll]
-  )
-
-  const handleApplyPriorityAll = useCallback(
-    (priority: Priority | null) =>
-      applySettingAll("우선순위", { priority }, priorityLabel(priority)),
-    [applySettingAll]
-  )
-
-  /** 그룹들의 네이버 지역 타겟을 바꾸므로 확인을 받고 실행한다. 모음 필터 중이면 그 모음만 */
-  const handleApplyRegionAll = useCallback(
-    (region: string | null) => {
-      if (visibleGroups.length === 0) return
-      const label = regionLabel(regions, region)
-      overlay.open(({ isOpen, close, unmount }) => (
-        <ConfirmDialog
-          isOpen={isOpen}
-          close={close}
-          unmount={unmount}
-          title={`${scopeId ? "이 모음의 모든 그룹" : "모든 그룹"}에 지역을 적용할까요?`}
-          description={
-            <>
-              {scopeLabel} <b>{visibleGroups.length}개</b>의 노출 지역이{" "}
-              <b>{label}</b>(으)로 바뀝니다. 네이버 광고 그룹의 지역 타겟이 직접
-              변경되며, 지역 타겟이 없는 그룹은 건너뜁니다.
-            </>
-          }
-          confirmLabel="적용"
-          pendingLabel="적용 중..."
-          onConfirm={async () => {
-            const applied = await applyRegionToAll({
-              region,
-              collectionId: scopeId,
-            })
-            toast.success(
-              `그룹 ${applied}개의 지역을 ${label}(으)로 바꿨습니다.`
-            )
-          }}
-        />
-      ))
-    },
-    [visibleGroups.length, scopeId, scopeLabel, regions, applyRegionToAll]
+    [setQueueMembership]
   )
 
   // ── 모음(즐겨찾기) ──────────────────────────────────────────
@@ -768,22 +548,9 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           collections,
           onToggle: handleToggleMembership,
           onCreateWith: (group: AdGroup) => openCreateCollection([group]),
-        },
-        regions,
-        { options: regionOptions(regions), onApplyAll: handleApplyRegionAll },
-        { options: DEVICE_OPTIONS, onApplyAll: handleApplyDeviceAll },
-        { options: PRIORITY_OPTIONS, onApplyAll: handleApplyPriorityAll }
+        }
       ),
-    [
-      handleToggle,
-      collections,
-      handleToggleMembership,
-      openCreateCollection,
-      regions,
-      handleApplyRegionAll,
-      handleApplyDeviceAll,
-      handleApplyPriorityAll,
-    ]
+    [handleToggle, collections, handleToggleMembership, openCreateCollection]
   )
 
   return (
@@ -836,7 +603,9 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
             >
               {collections.length > 0 && (
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>선택한 그룹 {selectedCount}개를 담을 모음</DropdownMenuLabel>
+                  <DropdownMenuLabel>
+                    선택한 그룹 {selectedCount}개를 담을 모음
+                  </DropdownMenuLabel>
                   {collections.map((c) => (
                     <DropdownMenuItem
                       key={c.id}
@@ -857,7 +626,9 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     variant="destructive"
-                    onClick={() => handleBulkMembership(selectedCollection, false)}
+                    onClick={() =>
+                      handleBulkMembership(selectedCollection, false)
+                    }
                   >
                     <X />"{selectedCollection.name}" 모음에서 빼기
                   </DropdownMenuItem>
@@ -893,13 +664,12 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           onSelectionChanged={syncSelectedCount}
           onRowDataUpdated={syncSelectedCount}
           onCellClicked={handleCellClicked}
+          onSortChanged={refreshRowNumbers}
+          onFilterChanged={refreshRowNumbers}
           quickFilterText={query}
           loading={loading}
           overlayComponent={GridOverlay}
           overlayComponentParams={overlayParams}
-          readOnlyEdit
-          onCellEditRequest={handleCellEditRequest}
-          stopEditingWhenCellsLoseFocus
           suppressCellFocus
           rowClass="cursor-pointer"
         />

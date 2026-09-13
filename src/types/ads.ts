@@ -15,8 +15,23 @@ export interface AdGroup {
   campaignName: string
   name: string
   siteUrl: string
-  /** 이 그룹의 자동입찰 on/off. 한 번도 켠 적 없으면 false */
+  /** 대기열 — 자동입찰 큐에 넣어 둔 그룹인지. 큐에 있어도 입찰은 따로 시작해야 돈다 (POST /api/autobid/queue/start) */
+  queued: boolean
+  /**
+   * 입찰 상태 — 이 그룹의 자동입찰이 실제로 돌고 있는지(시작/중지). 한 번도 시작한 적 없으면 false.
+   * 우리 엔진이 입찰가를 조정하는지만 뜻하고, 광고 노출과는 무관하다.
+   */
   autobidEnabled: boolean
+  /**
+   * 광고 상태 — 네이버 기준으로 이 그룹의 광고가 노출될 수 있는지.
+   * 네이버 광고그룹 status 가 ELIGIBLE | LIMITED_ELIGIBLE 이고 userLock(사용자 OFF)이 아니면 true. 읽기 전용(네이버에서만 변경)
+   */
+  adActive: boolean
+  /**
+   * 광고가 노출되지 않는 이유 — 네이버 statusReason 그대로 (GROUP_PAUSED, CAMPAIGN_PAUSED,
+   * CAMPAIGN_LIMITED_BY_BUDGET, BUSINESS_CHANNEL_UNDER_REVIEW …). 노출 중이거나 네이버가 안 주면 null
+   */
+  adStatusReason: string | null
   /**
    * 노출 지역 — 네이버 광고 그룹의 지역 타겟이 시/도 하나면 그 code (GET /api/regions).
    * 제한 없음(전체 노출)·여러 지역·지역 타겟 없음이면 null
@@ -186,6 +201,23 @@ export interface KeywordStats {
   videoViews: number
 }
 
+/**
+ * 엔진이 이 키워드를 마지막으로 처리한 결과 (keyword_states 한 행). 서버 스키마: AutobidState
+ * 자동입찰 대상으로 등록된 키워드에만 있다 — GET .../keywords?autobidOnly=true 는 이 값이 있는 키워드만 준다.
+ */
+export interface AutobidState {
+  /** 마지막 검토 시각 (ISO). 아직 한 번도 검토되지 않았으면 null */
+  lastRunAt: string | null
+  /** 마지막으로 계산한 입찰가 (원) */
+  lastBid: number | null
+  /** 마지막 검토 결과 사유 */
+  lastReason: string | null
+  /** 마지막으로 네이버에 입찰가를 보낸 시각 (ISO) */
+  lastSentAt: string | null
+  /** 다음 검토 예정 시각 (ISO) */
+  nextRunAt: string | null
+}
+
 /** 광고 그룹에 등록된 키워드 (네이버 실시간 조회 + 사용자 설정·기간 통계 병합) — GET /api/adgroups/{id}/keywords */
 export interface AdGroupKeyword {
   /** nccKeywordId */
@@ -218,6 +250,64 @@ export interface AdGroupKeyword {
   bidSetting: BidSetting | null
   /** 기간 통계. 통계 조회가 실패하면 null (목록은 정상) */
   stats: KeywordStats | null
+  /** 자동입찰 진행 상태. 자동입찰 대상이 아니면 null */
+  autobid: AutobidState | null
+}
+
+// ── 자동입찰 큐 — /api/autobid/* ──────────────────────────────
+
+/**
+ * 자동입찰 큐의 한 항목 = 큐에 넣은 광고 그룹 + 입찰 상태(autobidEnabled) + 진행 상황.
+ * GET /api/adgroups 와 같은 순서·필드로 온다. 서버 스키마: AutobidQueueItem
+ */
+export interface AutobidQueueItem extends AdGroup {
+  /** 자동입찰 대상으로 등록된 키워드 수 */
+  targetKeywords: number
+  /** 그중 한 번 이상 검토된 키워드 수 */
+  processedKeywords: number
+  /** 이 그룹에서 가장 최근에 검토한 시각 (ISO). 아직 없으면 null */
+  lastRunAt: string | null
+}
+
+/** 큐 넣기·입찰 시작 응답의 그룹별 결과. 서버 스키마: AutobidQueueOpItem */
+export interface AutobidQueueOpItem {
+  adGroupId: string
+  ok: boolean
+  /** 실패 사유 (계정에 없는 그룹, 네이버 키워드 조회 실패 등) */
+  error: string | null
+  /** 입찰 시작 시 등록된 대상 키워드 수 (큐 넣기에서는 0) */
+  targetKeywords: number
+}
+
+/** POST /api/autobid/queue, POST /api/autobid/queue/start 응답 — 그룹마다 따로 처리되므로 일부만 실패할 수 있다 */
+export interface AutobidQueueOpResult {
+  items: AutobidQueueOpItem[]
+  /** 성공한 그룹 수 */
+  applied: number
+}
+
+/** DELETE /api/autobid/queue, POST /api/autobid/queue/stop 응답. 없거나 이미 그 상태인 그룹은 세지 않는다 */
+export interface AutobidQueueCountResult {
+  count: number
+}
+
+/** 계정 단위 자동입찰 현황 (화면 상단 배지) — GET /api/autobid/status. 서버 스키마: AutobidStatus */
+export interface AutobidStatus {
+  /** 요금제 코드 */
+  plan: string
+  planName: string
+  /** 워커 한 주기에 검토하는 키워드 수 (요금제 한도) */
+  keywordsPerCycle: number
+  /** 워커 주기 (초) */
+  intervalSeconds: number
+  /** 큐(대기열)에 있는 그룹 수 */
+  queuedGroups: number
+  /** 입찰 중(시작된) 그룹 수 */
+  enabledGroups: number
+  targetKeywords: number
+  processedKeywords: number
+  /** 계정에서 가장 최근에 검토한 시각 (ISO) */
+  lastRunAt: string | null
 }
 
 export interface AccountCredentials {

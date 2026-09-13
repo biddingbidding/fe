@@ -1,5 +1,7 @@
 import { ExternalLink } from "lucide-react"
 
+import { AdStatus } from "@/components/ad-status-cell"
+import { BiddingState } from "@/components/bidding-state-cell"
 import { Badge } from "@/components/ui/badge"
 import {
   Sheet,
@@ -74,13 +76,21 @@ function DetailBody({ group }: { group: AdGroup }) {
       </SheetHeader>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 text-sm">
-        <dt className="text-muted-foreground">자동입찰</dt>
+        <dt className="text-muted-foreground">대기열</dt>
         <dd>
-          {group.autobidEnabled ? (
-            <span>진행 중</span>
+          {group.queued ? (
+            <span>대기열에 있음</span>
           ) : (
-            <span className="text-muted-foreground">정지</span>
+            <span className="text-muted-foreground">없음</span>
           )}
+        </dd>
+        <dt className="text-muted-foreground">입찰 상태</dt>
+        <dd>
+          <BiddingState enabled={group.autobidEnabled} />
+        </dd>
+        <dt className="text-muted-foreground">광고 상태</dt>
+        <dd>
+          <AdStatus group={group} />
         </dd>
         <dt className="text-muted-foreground">지역</dt>
         <dd>

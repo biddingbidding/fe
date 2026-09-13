@@ -62,11 +62,19 @@ export const applyAdGroupSettingToAll = (
   })
 
 /**
- * 네이버에서 실시간 조회한 키워드 + 사용자 입찰 설정(bidSetting) + 기간 통계(stats) 병합.
+ * 네이버에서 실시간 조회한 키워드 + 사용자 입찰 설정(bidSetting) + 기간 통계(stats) + 자동입찰 상태(autobid) 병합.
  * period 는 통계 집계 기간 (기본 last7days).
+ * autobidOnly 가 true 면 자동입찰 대상으로 등록된 키워드만 — 그룹을 켠 뒤 네이버에 새로 추가된 키워드는 빠진다.
  */
-export const getAdGroupKeywords = (id: string, period: StatsPeriod) =>
-  request<AdGroupKeyword[]>(
+export const getAdGroupKeywords = (
+  id: string,
+  period: StatsPeriod,
+  autobidOnly = false
+) => {
+  const params = new URLSearchParams({ period })
+  if (autobidOnly) params.set("autobidOnly", "true")
+  return request<AdGroupKeyword[]>(
     "GET",
-    `/api/adgroups/${encodeURIComponent(id)}/keywords?period=${period}`
+    `/api/adgroups/${encodeURIComponent(id)}/keywords?${params}`
   )
+}

@@ -3,13 +3,11 @@ import type {
   CellEditRequestEvent,
   ColDef,
   ColGroupDef,
-  FilterChangedEvent,
   GetRowIdFunc,
   IErrorValidationParams,
   RowDataUpdatedEvent,
   RowSelectionOptions,
   SelectionChangedEvent,
-  SortChangedEvent,
   ValueFormatterParams,
 } from "ag-grid-community"
 import {
@@ -54,13 +52,13 @@ import {
   useBulkUpdateKeywordSettings,
   useUpdateKeywordSetting,
 } from "@/hooks/use-ad-groups"
-import { gridTheme } from "@/lib/ag-grid"
+import { gridTheme, refreshRowNumbers, rowNumberColDef } from "@/lib/ag-grid"
 import {
   BID_SETTING_RULES,
   RANK_MAX,
   toSettingValue,
 } from "@/lib/bid-setting-rules"
-import { formatNumber } from "@/lib/format"
+import { formatDateTime, formatNumber } from "@/lib/format"
 import {
   STATS_PERIOD_OPTIONS,
   formatStatsPeriod,
@@ -80,11 +78,20 @@ import type {
 interface BiddingKeywordGridProps {
   /** 선택된 그룹. 없으면 안내 문구만 보인다 */
   group: AdGroup | null
+  /**
+   * true 면 자동입찰 대상으로 등록된 키워드만 보이고(GET ...?autobidOnly=true) "자동입찰" 열(최근 입찰가·검토 시각)이 붙는다.
+   * 자동 입찰 페이지에서 큐 항목을 눌렀을 때 쓴다. 그룹을 켠 뒤 네이버에 새로 추가한 키워드는 대상이 아니라 빠진다.
+   */
+  autobidOnly?: boolean
+  /** 그룹이 없을 때 보일 안내 문구 */
+  emptyMessage?: string
 }
 
 interface OverlayParams {
   query: string
   errorMessage: string | null
+  /** 자동입찰 대상만 보는 중이면 빈 목록 문구를 바꾼다 */
+  autobidOnly: boolean
 }
 
 // 헤더·셀 모두 가운데 정렬. cellClass 는 컬럼에서 덮어쓰면 합쳐지지 않으니 각자 text-center 를 포함한다.
@@ -94,10 +101,6 @@ const defaultColDef: ColDef<AdGroupKeyword> = {
   suppressHeaderMenuButton: true,
   headerClass: "ag-header-center",
   cellClass: "text-center",
-}
-
-const numberCell: Partial<ColDef<AdGroupKeyword>> = {
-  cellClass: "tabular-nums text-center",
 }
 
 /** 셀 정렬. 금액 열은 자릿수를 맞춰 비교하기 쉽도록 오른쪽 정렬(헤더는 그대로 가운데) */
@@ -293,23 +296,50 @@ function StatsGroupHeader({
   )
 }
 
+/** 자동입찰 상태(autobid) 시각 열 — 아직 없으면 "-" */
+const formatAutobidTime = ({
+  value,
+}: ValueFormatterParams<AdGroupKeyword, string | null>) =>
+  value ? formatDateTime(value) : "-"
+
+/**
+ * "자동입찰" 그룹 — 엔진이 마지막으로 계산한 입찰가와 검토 시각. autobidOnly 모드(자동 입찰 페이지)에서만 붙인다.
+ * lastReason 은 셀 툴팁으로 보인다.
+ */
+const autobidColGroup: ColGroupDef<AdGroupKeyword> = {
+  groupId: "autobid",
+  headerName: "자동입찰",
+  headerClass: "ag-header-center",
+  marryChildren: true,
+  children: [
+    {
+      colId: "lastBid",
+      headerName: "최근 입찰가",
+      ...fit(110),
+      cellClass: "tabular-nums text-right",
+      valueGetter: ({ data }) => data?.autobid?.lastBid ?? null,
+      valueFormatter: formatStatWon,
+      tooltipValueGetter: ({ data }) => data?.autobid?.lastReason ?? undefined,
+    },
+    {
+      colId: "lastRunAt",
+      headerName: "최근 검토",
+      ...fit(130),
+      cellClass: "tabular-nums text-center text-muted-foreground",
+      valueGetter: ({ data }) => data?.autobid?.lastRunAt ?? null,
+      valueFormatter: formatAutobidTime,
+      tooltipValueGetter: ({ data }) => data?.autobid?.lastReason ?? undefined,
+    },
+  ],
+}
+
 // 헤더는 2단: 실적 컬럼들은 "실적" 그룹 아래에 묶인다.
 // 기간 선택 상태를 헤더에 넘겨야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
 const buildColumnDefs = (
-  statsHeader: StatsGroupHeaderParams
+  statsHeader: StatsGroupHeaderParams,
+  withAutobid: boolean
 ): (ColDef<AdGroupKeyword> | ColGroupDef<AdGroupKeyword>)[] => [
-  {
-    colId: "no",
-    headerName: "No",
-    width: 60,
-    // 화면에 보이는 순서대로 1부터. 정렬·검색으로 순서가 바뀌면 다시 계산한다(refreshRowNumbers)
-    valueGetter: ({ node }) =>
-      node?.rowIndex == null ? null : node.rowIndex + 1,
-    sortable: false,
-    suppressMovable: true,
-    ...numberCell,
-    cellClass: "tabular-nums text-center text-muted-foreground",
-  },
+  rowNumberColDef<AdGroupKeyword>(),
   {
     field: "keyword",
     headerName: "키워드",
@@ -360,6 +390,7 @@ const buildColumnDefs = (
       avgRankCol,
     ],
   },
+  ...(withAutobid ? [autobidColGroup] : []),
 ]
 
 /** 편집 가능한 컬럼 colId → 설정 필드. 편집 요청을 PATCH 바디로 바꿀 때 쓴다 */
@@ -375,6 +406,7 @@ function GridOverlay({
   overlayType,
   query,
   errorMessage,
+  autobidOnly,
 }: CustomOverlayProps<AdGroupKeyword> & OverlayParams) {
   let message: React.ReactNode
   switch (overlayType) {
@@ -388,6 +420,8 @@ function GridOverlay({
           <br />
           <span className="opacity-70">{errorMessage}</span>
         </>
+      ) : autobidOnly ? (
+        "자동입찰 대상으로 등록된 키워드가 없습니다."
       ) : (
         "등록된 키워드가 없습니다."
       )
@@ -401,19 +435,16 @@ function GridOverlay({
   return <p className="text-center text-sm text-muted-foreground">{message}</p>
 }
 
-/** No 열은 rowIndex 기반이라 정렬·필터 뒤에는 강제로 다시 그려야 한다 */
-function refreshRowNumbers({
-  api,
-}: SortChangedEvent<AdGroupKeyword> | FilterChangedEvent<AdGroupKeyword>) {
-  api.refreshCells({ columns: ["no"], force: true })
-}
-
 /**
  * 자동 입찰 페이지 하단 — 선택한 그룹의 키워드 목록.
  * 희망순위·입찰가 한도·가감액은 셀을 더블클릭(또는 Enter)해 편집하면 즉시 저장된다.
  * 여러 키워드를 체크하고 툴바의 "일괄 설정"으로 세 값을 한 번에 바꿀 수도 있다.
  */
-export function BiddingKeywordGrid({ group }: BiddingKeywordGridProps) {
+export function BiddingKeywordGrid({
+  group,
+  autobidOnly = false,
+  emptyMessage = "위에서 그룹을 선택하면 키워드가 여기에 표시됩니다.",
+}: BiddingKeywordGridProps) {
   const adGroupId = group?.id ?? null
   const gridRef = useRef<AgGridReact<AdGroupKeyword>>(null)
   // 툴바 버튼 활성화·개수 표시용. 실제 대상 행은 클릭 시점에 그리드에서 다시 읽는다.
@@ -431,21 +462,24 @@ export function BiddingKeywordGrid({ group }: BiddingKeywordGridProps) {
     isFetching,
     error,
     refetch,
-  } = useAdGroupKeywords(adGroupId, statsPeriod)
+  } = useAdGroupKeywords(adGroupId, statsPeriod, autobidOnly)
   const updateSetting = useUpdateKeywordSetting(adGroupId)
   const bulkUpdate = useBulkUpdateKeywordSettings(adGroupId)
 
   const columnDefs = useMemo(
     () =>
-      buildColumnDefs({ period: statsPeriod, onPeriodChange: setStatsPeriod }),
-    [statsPeriod, setStatsPeriod]
+      buildColumnDefs(
+        { period: statsPeriod, onPeriodChange: setStatsPeriod },
+        autobidOnly
+      ),
+    [statsPeriod, setStatsPeriod, autobidOnly]
   )
 
   const [search, setSearch] = useState("")
   const query = search.trim()
   const overlayParams = useMemo<OverlayParams>(
-    () => ({ query, errorMessage: error?.message ?? null }),
-    [query, error]
+    () => ({ query, errorMessage: error?.message ?? null, autobidOnly }),
+    [query, error, autobidOnly]
   )
 
   /**
@@ -513,7 +547,7 @@ export function BiddingKeywordGrid({ group }: BiddingKeywordGridProps) {
   if (!group) {
     return (
       <div className="flex flex-1 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
-        위에서 그룹을 선택하면 키워드가 여기에 표시됩니다.
+        {emptyMessage}
       </div>
     )
   }
@@ -529,7 +563,7 @@ export function BiddingKeywordGrid({ group }: BiddingKeywordGridProps) {
           <span className="truncate font-medium">{group.name}</span>
           {!isLoading && (
             <Badge variant="secondary" className="shrink-0">
-              키워드 {keywords.length}개
+              {autobidOnly ? "대상 키워드" : "키워드"} {keywords.length}개
             </Badge>
           )}
         </div>

@@ -1,4 +1,7 @@
 import {
+  type ColDef,
+  type FilterChangedEvent,
+  type SortChangedEvent,
   CellStyleModule,
   ClientSideRowModelModule,
   ExternalFilterModule,
@@ -85,3 +88,33 @@ export const gridTheme: Theme = themeQuartz.withParams({
   borderRadius: 4,
   wrapperBorderRadius: "calc(var(--radius) - 2px)",
 })
+
+/** "No" 열 colId — refreshRowNumbers 가 이 열만 다시 그린다 */
+export const ROW_NUMBER_COL_ID = "no"
+
+/**
+ * 가장 왼쪽의 "No" 열 — 화면에 보이는 순서대로 1부터. 정렬·검색으로 순서가 바뀌면
+ * rowIndex 가 바뀌므로 onSortChanged/onFilterChanged 에 refreshRowNumbers 를 걸어 다시 계산한다.
+ */
+export function rowNumberColDef<T>(): ColDef<T> {
+  return {
+    colId: ROW_NUMBER_COL_ID,
+    headerName: "No",
+    width: 60,
+    valueGetter: ({ node }) =>
+      node?.rowIndex == null ? null : node.rowIndex + 1,
+    sortable: false,
+    resizable: false,
+    suppressMovable: true,
+    lockPosition: "left",
+    headerClass: "ag-header-center",
+    cellClass: "tabular-nums text-center text-muted-foreground",
+  }
+}
+
+/** No 열은 rowIndex 기반이라 정렬·필터 뒤에는 강제로 다시 그려야 한다 (RenderApiModule) */
+export function refreshRowNumbers<T>({
+  api,
+}: SortChangedEvent<T> | FilterChangedEvent<T>) {
+  api.refreshCells({ columns: [ROW_NUMBER_COL_ID], force: true })
+}

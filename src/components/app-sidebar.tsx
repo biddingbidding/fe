@@ -23,9 +23,9 @@ export function AppSidebar() {
   const { pathname } = useLocation()
   const { account } = useAccount()
   const { data: groups = [] } = useAdGroups(account?.customerId)
-  // 자동입찰이 켜진 그룹 수
+  // 자동입찰 큐(대기열)에 있는 그룹 수
   const badges: Partial<Record<PageKey, number>> = {
-    bidding: groups.filter((g) => g.autobidEnabled).length,
+    bidding: groups.filter((g) => g.queued).length,
   }
 
   return (
