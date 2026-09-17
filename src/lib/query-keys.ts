@@ -7,6 +7,8 @@ export const queryKeys = {
   collections: (customerId: string) => ["collections", customerId] as const,
   /** 시/도 목록. 계정과 무관한 고정 데이터 */
   regions: ["regions"] as const,
+  /** 순위확인지역(시/도 + 시/군/구) 목록. 계정과 무관한 고정 데이터 */
+  rankRegions: ["rankRegions"] as const,
   /**
    * 그룹의 키워드 목록. period·autobidOnly 를 빼면 해당 그룹의 모든 키워드 쿼리에 매칭 (무효화·낙관적 갱신용).
    * autobidOnly 는 자동입찰 대상 키워드만 받는 자동 입찰 페이지용 변형 — 같은 그룹이라도 행 집합이 달라 키를 나눈다.

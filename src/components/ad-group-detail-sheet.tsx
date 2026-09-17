@@ -102,11 +102,7 @@ function DetailBody({ group }: { group: AdGroup }) {
         </dd>
         <dt className="text-muted-foreground">기기</dt>
         <dd>
-          {group.device ? (
-            <span>{deviceLabel(group.device)}</span>
-          ) : (
-            <span className="text-muted-foreground">미입력</span>
-          )}
+          <span>{deviceLabel(group.device)}</span>
         </dd>
         <dt className="text-muted-foreground">우선순위</dt>
         <dd>

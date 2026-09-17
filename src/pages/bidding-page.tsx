@@ -15,6 +15,7 @@ import { toast } from "sonner"
 import { AutobidQueueGrid } from "@/components/autobid-queue-grid"
 import { BiddingKeywordGrid } from "@/components/bidding-keyword-grid"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { RankRegionDialog } from "@/components/rank-region-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,17 +35,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useAccount } from "@/hooks/use-account"
-import { useRegions } from "@/hooks/use-ad-groups"
+import { useRankRegions, useUpdateAdGroupSetting } from "@/hooks/use-ad-groups"
 import {
   useAutobidQueue,
   useAutobidStatus,
-  useRemoveFromAutobidQueue,
   useStartAutobid,
   useStopAutobid,
 } from "@/hooks/use-autobid"
 import { formatDateTime, formatNumber } from "@/lib/format"
 import { routes } from "@/lib/pages"
-import { errorMessage } from "@/lib/toast"
+import { rankRegionLabel } from "@/lib/rank-region"
 import type { AutobidQueueItem, AutobidStatus } from "@/types/ads"
 
 /** 실패한 그룹을 토스트에 나열할 최대 개수. 넘치면 "외 N개" */
@@ -98,12 +98,11 @@ export function BiddingPage() {
   const customerId = account?.customerId
   const queue = useAutobidQueue(customerId)
   const { data: status } = useAutobidStatus(customerId)
-  const { data: regions = [] } = useRegions(!!customerId)
-  const removeFromQueue = useRemoveFromAutobidQueue(customerId)
+  const { data: rankRegions = [] } = useRankRegions(!!customerId)
+  const updateSetting = useUpdateAdGroupSetting(customerId)
   const startAutobid = useStartAutobid(customerId)
   const stopAutobid = useStopAutobid(customerId)
-  const busy =
-    removeFromQueue.isPending || startAutobid.isPending || stopAutobid.isPending
+  const busy = startAutobid.isPending || stopAutobid.isPending
   const items = queue.data ?? []
   const stoppedItems = items.filter((g) => !g.autobidEnabled)
   const runningItems = items.filter((g) => g.autobidEnabled)
@@ -168,42 +167,6 @@ export function BiddingPage() {
     }
   }
 
-  /** 그룹 하나 입찰 시작. 처음 시작하면 키워드를 네이버에서 받아 대상으로 등록하므로 확인을 받는다 */
-  function handleStart(item: AutobidQueueItem) {
-    overlay.open(({ isOpen, close, unmount }) => (
-      <ConfirmDialog
-        isOpen={isOpen}
-        close={close}
-        unmount={unmount}
-        title="입찰을 시작할까요?"
-        description={
-          <>
-            <b>{item.name}</b> 그룹의 자동입찰을 시작합니다. 그룹의 키워드를
-            자동입찰 대상으로 등록하고, 다음 워커 사이클(최대 60초)부터
-            검토·입찰이 돕니다.
-          </>
-        }
-        confirmLabel="입찰 시작"
-        pendingLabel="시작 중..."
-        onConfirm={() => runStart([item])}
-      />
-    ))
-  }
-
-  /** 그룹 하나 입찰 중지. 대기열에는 남고 키워드 설정·이력도 남는다 */
-  function handleStop(item: AutobidQueueItem) {
-    stopAutobid.mutate([item.id], {
-      onSuccess: () =>
-        toast.success(
-          `${item.name} 그룹의 입찰을 중지했습니다. 대기열에는 남아 있습니다.`
-        ),
-      onError: (err) =>
-        toast.error(
-          errorMessage(err, `${item.name} 그룹의 입찰을 중지하지 못했습니다.`)
-        ),
-    })
-  }
-
   /** 대기열의 정지 상태 그룹 전부 입찰 시작 */
   function handleStartAll() {
     if (stoppedItems.length === 0) return
@@ -255,27 +218,25 @@ export function BiddingPage() {
     ))
   }
 
-  /** 그룹 하나를 대기열에서 뺀다. 입찰 중이면 같이 멈춘다. 키워드 설정과 이력은 남는다 */
-  function handleRemove(item: AutobidQueueItem) {
+  /** 순위확인지역 셀 클릭 — 다이얼로그에서 고르면 바로 저장한다 (실패하면 다이얼로그에 오류) */
+  function handleEditRankRegion(item: AutobidQueueItem) {
     overlay.open(({ isOpen, close, unmount }) => (
-      <ConfirmDialog
+      <RankRegionDialog
         isOpen={isOpen}
         close={close}
         unmount={unmount}
-        title="대기열에서 뺄까요?"
-        description={
-          <>
-            <b>{item.name}</b> 그룹을 대기열에서 뺍니다.
-            {item.autobidEnabled && " 입찰 중이므로 입찰도 함께 멈춥니다."}{" "}
-            키워드의 희망순위·입찰가 한도·가감액 설정은 그대로 남습니다.
-          </>
-        }
-        confirmLabel="대기열에서 빼기"
-        pendingLabel="빼는 중..."
-        destructive
-        onConfirm={async () => {
-          await removeFromQueue.mutateAsync([item.id])
-          toast.success(`${item.name} 그룹을 대기열에서 뺐습니다.`)
+        groupName={item.name}
+        value={item.rankRegion}
+        onSelect={async (code) => {
+          await updateSetting.mutateAsync({
+            adGroupId: item.id,
+            patch: { rankRegion: code },
+          })
+          toast.success(
+            code
+              ? `${item.name} 그룹의 순위확인지역을 ${rankRegionLabel(rankRegions, code)}(으)로 설정했습니다.`
+              : `${item.name} 그룹의 순위확인지역 설정을 해제했습니다.`
+          )
         }}
       />
     ))
@@ -330,15 +291,6 @@ export function BiddingPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <StatusSummary status={status} />
             <div className="flex items-center gap-2">
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-xs"
-                onClick={goAdGroups}
-              >
-                대기열에 넣기는 캠페인/그룹에서
-                <ArrowRight />
-              </Button>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -431,16 +383,13 @@ export function BiddingPage() {
           <div className="min-h-0 flex-1">
             <AutobidQueueGrid
               items={items}
-              regions={regions}
               loading={queue.isLoading}
               errorMessage={queue.error?.message ?? null}
               query={query}
               selectedId={activeItem?.id ?? null}
               onSelect={selectItem}
-              onStart={handleStart}
-              onStop={handleStop}
-              onRemove={handleRemove}
-              busy={busy}
+              rankRegions={rankRegions}
+              onEditRankRegion={handleEditRankRegion}
             />
           </div>
         </div>

@@ -29,6 +29,16 @@ export function useRegions(enabled: boolean) {
   })
 }
 
+/** 순위확인지역 목록 (시/도 + 시/군/구). 행정구역 자료라 한 번 받으면 다시 받지 않는다 */
+export function useRankRegions(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.rankRegions,
+    queryFn: api.getRankRegions,
+    enabled,
+    staleTime: Infinity,
+  })
+}
+
 /**
  * 광고 그룹의 키워드 목록 (+ 입찰 설정, period 기간 통계, 자동입찰 상태). adGroupId 가 없으면 조회하지 않는다.
  * autobidOnly 가 true 면 자동입찰 대상으로 등록된 키워드만 (자동 입찰 페이지의 큐 항목 화면용).
@@ -128,10 +138,24 @@ export function useBulkUpdateKeywordSettings(adGroupId: string | null) {
   })
 }
 
-/** 광고 그룹 하나의 설정(기기·우선순위)을 낙관적으로 수정한다. 보낸 필드만 바뀐다. 실패하면 되돌린다. */
+/**
+ * 광고 그룹 하나의 설정(기기·우선순위·순위확인지역)을 낙관적으로 수정한다. 보낸 필드만 바뀐다. 실패하면 되돌린다.
+ * 같은 그룹이 캠페인/그룹 목록과 자동입찰 대기열 두 캐시에 있으므로 둘 다 반영하고,
+ * 성공하면 서버가 돌려준 값(표시용 rankRegionName 포함)으로 맞춘다.
+ */
 export function useUpdateAdGroupSetting(customerId: string | undefined) {
   const queryClient = useQueryClient()
-  const key = queryKeys.adGroups(customerId ?? "")
+  const cid = customerId ?? ""
+  const keys = [queryKeys.adGroups(cid), queryKeys.autobidQueue(cid)]
+
+  /** 두 캐시에서 그 그룹 행만 fields 로 덮어쓴다 */
+  function mergeInto(adGroupId: string, fields: Partial<AdGroup>) {
+    for (const key of keys) {
+      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
+        prev?.map((g) => (g.id === adGroupId ? { ...g, ...fields } : g))
+      )
+    }
+  }
 
   return useMutation({
     mutationFn: ({
@@ -142,16 +166,27 @@ export function useUpdateAdGroupSetting(customerId: string | undefined) {
       patch: AdGroupSettingPatch
     }) => api.patchAdGroupSetting(adGroupId, patch),
     onMutate: async ({ adGroupId, patch }) => {
-      await queryClient.cancelQueries({ queryKey: key })
-      const previous = queryClient.getQueryData<AdGroup[]>(key)
-      queryClient.setQueryData<AdGroup[]>(key, (prev) =>
-        prev?.map((g) => (g.id === adGroupId ? { ...g, ...patch } : g))
+      await Promise.all(
+        keys.map((queryKey) => queryClient.cancelQueries({ queryKey }))
       )
+      const previous = keys.map(
+        (key) => [key, queryClient.getQueryData<AdGroup[]>(key)] as const
+      )
+      mergeInto(adGroupId, patch)
       return { previous }
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+      for (const [key, data] of ctx?.previous ?? []) {
+        if (data) queryClient.setQueryData(key, data)
+      }
     },
+    onSuccess: (setting) =>
+      mergeInto(setting.adGroupId, {
+        device: setting.device,
+        priority: setting.priority,
+        rankRegion: setting.rankRegion,
+        rankRegionName: setting.rankRegionName,
+      }),
   })
 }
 

@@ -6,6 +6,7 @@ import type {
   AdGroupSetting,
   AdGroupSettingApplyResult,
   AdGroupSettingPatch,
+  RankRegion,
   Region,
   StatsPeriod,
 } from "@/types/ads"
@@ -27,6 +28,10 @@ export const patchAdGroup = (
 /** 노출 지역으로 고를 수 있는 시/도 목록 (가나다 순) */
 export const getRegions = () => request<Region[]>("GET", "/api/regions")
 
+/** 순위확인지역으로 고를 수 있는 시/도와 시/군/구 (공식 법정동코드 기준, 코드 순) */
+export const getRankRegions = () =>
+  request<RankRegion[]>("GET", "/api/regions/rank")
+
 /**
  * "모든 그룹에 적용" — 계정의 모든 광고 그룹의 노출 지역을 같은 값으로. 지역 타겟이 없는 그룹은 건너뛴다.
  * collectionId 를 주면 그 모음에 담긴 그룹만 (없는 모음이면 404).
@@ -40,7 +45,10 @@ export const applyRegionToAll = (
     ...(collectionId ? { collectionId } : {}),
   })
 
-/** 그룹 하나의 설정(기기·우선순위) 수정. 보낸 필드만 바뀌고, null 을 보내면 미입력(서버 기본값)으로 되돌린다. */
+/**
+ * 그룹 하나의 설정(기기·우선순위) 수정. 보낸 필드만 바뀐다.
+ * 기기는 PC | MOBILE 만 (null 이면 400). 우선순위·순위확인지역은 null 을 보내면 미입력으로 되돌린다.
+ */
 export const patchAdGroupSetting = (id: string, patch: AdGroupSettingPatch) =>
   request<AdGroupSetting>(
     "PATCH",

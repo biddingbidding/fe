@@ -81,6 +81,8 @@ const defaultColDef: ColDef<AdGroup> = {
   resizable: true,
   sortable: true,
   suppressHeaderMenuButton: true,
+  // 모든 열 헤더 가운데 정렬 (셀 정렬은 열마다)
+  headerClass: "ag-header-center",
 }
 
 /**
@@ -217,7 +219,9 @@ const buildColumnDefs = (
   {
     colId: "collections",
     headerName: "모음",
-    width: 150,
+    // 배지가 여러 개면 넓은 화면에서 더 보이도록 다른 이름 열처럼 늘어난다
+    flex: 1,
+    minWidth: 150,
     sortable: false,
     cellRenderer: CollectionsCell,
     cellRendererParams: collectionsCell,

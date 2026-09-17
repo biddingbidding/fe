@@ -12,23 +12,16 @@ import {
   type CustomCellRendererProps,
   type CustomOverlayProps,
 } from "ag-grid-react"
-import { ListMinus, Play, Square } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 
-import { AdStatusCell } from "@/components/ad-status-cell"
-import { BiddingStateCell } from "@/components/bidding-state-cell"
-import { Button } from "@/components/ui/button"
-import { adStatusLabel } from "@/lib/ad-status"
 import { gridTheme, refreshRowNumbers, rowNumberColDef } from "@/lib/ag-grid"
-import { biddingStateLabel } from "@/lib/bidding-state"
-import { deviceLabel } from "@/lib/device"
-import { formatNumber } from "@/lib/format"
-import { priorityLabel } from "@/lib/priority"
-import { regionLabel } from "@/lib/region"
-import type { AutobidQueueItem, Device, Priority, Region } from "@/types/ads"
+import { formatDateTime, formatNumber } from "@/lib/format"
+import { rankRegionLabel } from "@/lib/rank-region"
+import { cn } from "@/lib/utils"
+import type { AutobidQueueItem, RankRegion } from "@/types/ads"
 
 interface AutobidQueueGridProps {
   items: AutobidQueueItem[]
-  regions: Region[]
   loading: boolean
   /** 목록을 못 받았을 때 빈 그리드에 보일 오류 문구 */
   errorMessage: string | null
@@ -37,13 +30,10 @@ interface AutobidQueueGridProps {
   /** 선택된(아래 키워드 표에 보이는) 그룹 ID */
   selectedId: string | null
   onSelect: (item: AutobidQueueItem) => void
-  /** 행 끝의 [시작]/[중지] 버튼 — 그룹 하나의 입찰을 시작하거나 멈춘다 (큐에는 남는다) */
-  onStart: (item: AutobidQueueItem) => void
-  onStop: (item: AutobidQueueItem) => void
-  /** 행 끝의 [빼기] 버튼 — 그룹 하나를 큐에서 뺀다 (입찰 중이면 같이 멈춘다) */
-  onRemove: (item: AutobidQueueItem) => void
-  /** 시작·중지·빼기 요청 진행 중이면 행 버튼을 잠근다 */
-  busy: boolean
+  /** 순위확인지역 목록 (셀에 "서울 송파구" 처럼 짧은 이름을 보이는 데 쓴다) */
+  rankRegions: RankRegion[]
+  /** 순위확인지역 셀 클릭 — 선택 다이얼로그를 연다 */
+  onEditRankRegion: (item: AutobidQueueItem) => void
 }
 
 interface OverlayParams {
@@ -51,69 +41,22 @@ interface OverlayParams {
   errorMessage: string | null
 }
 
-/** 행 끝의 조작 열 — 클릭이 행 선택으로 새지 않도록 따로 처리한다 */
-const ACTIONS_COL_ID = "actions"
-
 const defaultColDef: ColDef<AutobidQueueItem> = {
   resizable: true,
   sortable: true,
   suppressHeaderMenuButton: true,
+  // 모든 열 헤더 가운데 정렬 (셀 정렬은 열마다)
+  headerClass: "ag-header-center",
 }
 
 /**
  * 한 번에 한 그룹만 본다. 선택의 진실은 URL(?group=)이라 그리드의 클릭 선택은 끄고
  * onCellClicked → onSelect → selectedId 변경 → 그리드 선택 동기화 순서로 흐른다.
- * ([빼기] 버튼 클릭이 행 선택으로 새지 않게 하기 위해서도 필요하다)
  */
 const rowSelection: RowSelectionOptions<AutobidQueueItem> = {
   mode: "singleRow",
   checkboxes: false,
   enableClickSelection: false,
-}
-
-interface ActionsCellParams {
-  onStart: (item: AutobidQueueItem) => void
-  onStop: (item: AutobidQueueItem) => void
-  onRemove: (item: AutobidQueueItem) => void
-  busy: boolean
-}
-
-/** 행 끝 조작 셀 — 입찰 시작/중지 토글 버튼 + 대기열에서 빼기 */
-function ActionsCell({
-  data,
-  onStart,
-  onStop,
-  onRemove,
-  busy,
-}: CustomCellRendererProps<AutobidQueueItem> & ActionsCellParams) {
-  if (!data) return null
-  const running = data.autobidEnabled
-  return (
-    <div className="flex h-full items-center justify-center gap-0.5">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className={running ? "text-primary" : "text-muted-foreground"}
-        disabled={busy}
-        onClick={() => (running ? onStop(data) : onStart(data))}
-        aria-label={`${data.name} 입찰 ${running ? "중지" : "시작"}`}
-        title={running ? "입찰 중지" : "입찰 시작"}
-      >
-        {running ? <Square /> : <Play />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className="text-muted-foreground hover:text-destructive"
-        disabled={busy}
-        onClick={() => onRemove(data)}
-        aria-label={`${data.name} 대기열에서 빼기`}
-        title="대기열에서 빼기"
-      >
-        <ListMinus />
-      </Button>
-    </div>
-  )
 }
 
 /** 자동입찰 대상 키워드 수. 아직 입찰을 시작하지 않은 그룹은 0 */
@@ -122,78 +65,74 @@ const formatKeywordCount = ({
 }: ValueFormatterParams<AutobidQueueItem, number>) =>
   value == null ? "" : formatNumber(value)
 
-// 현재 API(AutobidQueueItem)로 받을 수 있는 필드만 컬럼으로 둔다. 설정 편집은 캠페인/그룹 페이지에서.
+/** 최근 입찰 = 네이버에 입찰가를 실제로 보낸 마지막 시각. 유지로만 끝났거나 시작 전이면 "-" */
+const formatLastSent = ({
+  value,
+}: ValueFormatterParams<AutobidQueueItem, string | null>) =>
+  value ? formatDateTime(value) : "-"
+
+/** 순위확인지역 열 — 클릭하면 행 선택 대신 선택 다이얼로그를 연다 */
+const RANK_REGION_COL_ID = "rankRegion"
+
+/** 순위확인지역 셀 — 누를 수 있다는 것이 보이도록 이름 옆에 화살표를 둔다. 미설정이면 흐리게 */
+function RankRegionCell({
+  data,
+  valueFormatted,
+}: CustomCellRendererProps<AutobidQueueItem, string | null>) {
+  if (!data) return null
+  return (
+    <div
+      className={cn(
+        "flex h-full items-center justify-between gap-1 hover:text-primary",
+        !data.rankRegion && "text-muted-foreground"
+      )}
+    >
+      <span className="truncate">{valueFormatted}</span>
+      <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+    </div>
+  )
+}
+
+// 대기열에서는 캠페인 / 그룹 / 키워드 수 / 최근 입찰 / 순위확인지역만 본다. 입찰 시작·중지는 위의 [모두 시작]/[모두 중지],
+// 광고 상태·지역·기기·우선순위는 캠페인/그룹 페이지의 상세 시트에서, 대기열 빼기는 그 페이지의 [대기열] 스위치로.
+// 순위확인지역 이름을 목록에서 찾아야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
 const buildColumnDefs = (
-  regions: Region[],
-  actionsCell: ActionsCellParams
+  rankRegions: RankRegion[]
 ): ColDef<AutobidQueueItem>[] => [
   rowNumberColDef<AutobidQueueItem>(),
-  {
-    // 입찰 상태 — 큐에 있어도 시작하지 않으면 정지. 행 끝 버튼으로 바꾼다
-    colId: "biddingState",
-    headerName: "입찰 상태",
-    width: 100,
-    valueGetter: ({ data }) =>
-      data ? biddingStateLabel(data.autobidEnabled) : "",
-    cellRenderer: BiddingStateCell,
-  },
   { field: "campaignName", headerName: "캠페인명", flex: 1, minWidth: 160 },
   { field: "name", headerName: "그룹명", flex: 1, minWidth: 160 },
-  {
-    // 큐에 있어도 네이버에서 광고가 꺼져 있으면 입찰해도 노출이 안 된다 — 여기서 바로 보이게
-    colId: "adStatus",
-    headerName: "광고 상태",
-    width: 170,
-    valueGetter: ({ data }) => (data ? adStatusLabel(data) : ""),
-    tooltipValueGetter: ({ data }) => (data ? adStatusLabel(data) : undefined),
-    cellRenderer: AdStatusCell,
-  },
-  {
-    colId: "region",
-    headerName: "지역",
-    width: 100,
-    valueGetter: ({ data }) => data?.region ?? null,
-    valueFormatter: ({
-      value,
-    }: ValueFormatterParams<AutobidQueueItem, string | null>) =>
-      regionLabel(regions, value),
-  },
-  {
-    colId: "device",
-    headerName: "기기",
-    width: 90,
-    valueGetter: ({ data }) => data?.device ?? null,
-    valueFormatter: ({
-      value,
-    }: ValueFormatterParams<AutobidQueueItem, Device | null>) =>
-      deviceLabel(value),
-  },
-  {
-    colId: "priority",
-    headerName: "우선순위",
-    width: 100,
-    valueGetter: ({ data }) => data?.priority ?? null,
-    valueFormatter: ({
-      value,
-    }: ValueFormatterParams<AutobidQueueItem, Priority | null>) =>
-      priorityLabel(value),
-  },
   {
     field: "targetKeywords",
     headerName: "키워드",
     width: 90,
-    cellClass: "tabular-nums text-right",
+    cellClass: "tabular-nums text-center",
     valueFormatter: formatKeywordCount,
   },
   {
-    colId: ACTIONS_COL_ID,
-    headerName: "",
-    width: 76,
-    sortable: false,
-    resizable: false,
-    suppressMovable: true,
-    cellRenderer: ActionsCell,
-    cellRendererParams: actionsCell,
+    field: "lastSentAt",
+    headerName: "최근 입찰",
+    width: 140,
+    cellClass: "tabular-nums text-center text-muted-foreground",
+    valueFormatter: formatLastSent,
+    // 입찰가를 안 바꾼 검토도 있으니 마지막 검토 시각은 툴팁으로
+    tooltipValueGetter: ({ data }) =>
+      data?.lastRunAt
+        ? `최근 검토 ${formatDateTime(data.lastRunAt)}`
+        : undefined,
+  },
+  {
+    colId: RANK_REGION_COL_ID,
+    field: "rankRegion",
+    headerName: "순위확인지역",
+    width: 160,
+    cellClass: "cursor-pointer",
+    valueFormatter: ({ data }) =>
+      rankRegionLabel(rankRegions, data?.rankRegion, data?.rankRegionName),
+    // "송파" 로도 검색되게 표시 이름을 quick filter 에 넣는다
+    getQuickFilterText: ({ data }) =>
+      rankRegionLabel(rankRegions, data?.rankRegion, data?.rankRegionName),
+    cellRenderer: RankRegionCell,
   },
 ]
 
@@ -231,25 +170,19 @@ function GridOverlay({
 
 /**
  * 자동 입찰 페이지 상단 — 자동입찰 대기열(큐) 목록. 행을 클릭하면 아래 키워드 표가 그 그룹으로 바뀐다.
- * 선택 행은 그리드 선택색으로 표시하고, 행 끝의 버튼으로 입찰을 시작/중지하거나 그룹을 대기열에서 뺄 수 있다.
+ * 선택 행은 그리드 선택색으로 표시한다. 입찰 시작/중지는 페이지 위의 버튼으로 한다.
  */
 export function AutobidQueueGrid({
   items,
-  regions,
   loading,
   errorMessage,
   query,
   selectedId,
   onSelect,
-  onStart,
-  onStop,
-  onRemove,
-  busy,
+  rankRegions,
+  onEditRankRegion,
 }: AutobidQueueGridProps) {
-  const columnDefs = useMemo(
-    () => buildColumnDefs(regions, { onStart, onStop, onRemove, busy }),
-    [regions, onStart, onStop, onRemove, busy]
-  )
+  const columnDefs = useMemo(() => buildColumnDefs(rankRegions), [rankRegions])
   const overlayParams = useMemo<OverlayParams>(
     () => ({ query, errorMessage }),
     [query, errorMessage]
@@ -277,7 +210,11 @@ export function AutobidQueueGrid({
   }, [selectedId, items])
 
   function handleCellClicked(e: CellClickedEvent<AutobidQueueItem>) {
-    if (!e.data || e.column.getColId() === ACTIONS_COL_ID) return
+    if (!e.data) return
+    if (e.column.getColId() === RANK_REGION_COL_ID) {
+      onEditRankRegion(e.data)
+      return
+    }
     // URL 반영을 기다리지 않고 바로 표시해 클릭이 즉시 반응하게 한다
     e.api.setNodesSelected({ nodes: [e.node], newValue: true })
     onSelect(e.data)

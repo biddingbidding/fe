@@ -39,10 +39,17 @@ export interface AdGroup {
   region: string | null
   /** 표시용 지역 이름 ("서울"). region 이 null 이면 null */
   regionName: string | null
-  /** 예상 입찰가를 조회할 기기. 미입력이면 null (서버 기본값 사용) */
-  device: Device | null
+  /** 예상 입찰가를 조회할 기기. 항상 값이 있고, 설정한 적 없는 그룹은 PC */
+  device: Device
   /** 우선순위. 미입력이면 null (보통으로 동작) */
   priority: Priority | null
+  /**
+   * 순위확인지역 — 어느 지역에서 검색했을 때의 순위를 볼지. GET /api/regions/rank 의 code
+   * (법정동코드 10자리, 시/도 또는 시/군/구). 미설정이면 null. 노출 지역(region)과는 별개
+   */
+  rankRegion: string | null
+  /** 표시용 전체 이름 ("서울특별시 송파구"). 미설정이거나 목록에 없는 code 면 null */
+  rankRegionName: string | null
   /** 이 그룹이 담긴 모음(GET /api/collections) id 목록 — 모음 표시 순서. 보기용 */
   collectionIds: string[]
 }
@@ -79,6 +86,24 @@ export interface CollectionPatch {
   sortOrder?: number
 }
 
+/** 순위확인지역의 시/군/구 하나. 서버 스키마: RankDistrictRead */
+export interface RankDistrict {
+  /** 법정동코드 10자리 (예: 1171000000) */
+  code: string
+  /** 시/도를 뗀 이름 (예: 송파구, 수원시 장안구) */
+  name: string
+}
+
+/** 순위확인지역으로 고를 수 있는 시/도와 그 아래 시/군/구 — GET /api/regions/rank 항목. 서버 스키마: RankRegionRead */
+export interface RankRegion {
+  /** 법정동코드 10자리 (예: 1100000000). 이 code 를 고르면 시/도 전체 */
+  code: string
+  /** 공식 이름 (예: 서울특별시) */
+  name: string
+  /** 법정동코드 순. 세종특별자치시는 비어 있다 */
+  districts: RankDistrict[]
+}
+
 /** 노출 지역으로 고를 수 있는 시/도 — GET /api/regions 항목. 서버 스키마: RegionRead */
 export interface Region {
   /** API 계약값 (예: SEOUL) */
@@ -97,7 +122,7 @@ export interface AdGroupRegionBulkResult {
 
 /** 그룹 설정 중 사용자가 바꾸는 값. 서버 스키마: AdGroupSettingPatch / AdGroupSettingApplyAll (보낸 필드만 반영) */
 export type AdGroupSettingPatch = Partial<
-  Pick<AdGroupSetting, "device" | "priority">
+  Pick<AdGroupSetting, "device" | "priority" | "rankRegion">
 >
 
 /** PUT /api/adgroups/settings (모든 그룹에 적용) 응답 */
@@ -109,8 +134,10 @@ export interface AdGroupSettingApplyResult {
 /** 광고 그룹 설정 — PATCH /api/adgroups/{id}/settings 응답. 서버 스키마: AdGroupSettingRead */
 export interface AdGroupSetting {
   adGroupId: string
-  device: Device | null
+  device: Device
   priority: Priority | null
+  rankRegion: string | null
+  rankRegionName: string | null
   /** 마지막 저장 시각 (ISO) */
   updatedAt: string
 }
@@ -265,8 +292,10 @@ export interface AutobidQueueItem extends AdGroup {
   targetKeywords: number
   /** 그중 한 번 이상 검토된 키워드 수 */
   processedKeywords: number
-  /** 이 그룹에서 가장 최근에 검토한 시각 (ISO). 아직 없으면 null */
+  /** 이 그룹에서 가장 최근에 검토한 시각 (ISO, 입찰가를 유지한 검토 포함). 아직 없으면 null */
   lastRunAt: string | null
+  /** 이 그룹에서 가장 최근에 네이버로 입찰가를 실제로 보낸 시각 (ISO). 바꾼 적 없으면 null */
+  lastSentAt: string | null
 }
 
 /** 큐 넣기·입찰 시작 응답의 그룹별 결과. 서버 스키마: AutobidQueueOpItem */
