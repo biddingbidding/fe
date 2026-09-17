@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react"
 import {
-  SELECTION_COLUMN_ID,
-  type CellClickedEvent,
   type ColDef,
   type GetRowIdFunc,
   type RowDataUpdatedEvent,
@@ -25,7 +23,6 @@ import { overlay } from "overlay-kit"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
-import { AdGroupDetailSheet } from "@/components/ad-group-detail-sheet"
 import { AdStatusCell } from "@/components/ad-status-cell"
 import { BiddingStateCell } from "@/components/bidding-state-cell"
 import { CollectionDialog } from "@/components/collection-dialog"
@@ -99,7 +96,7 @@ const defaultColDef: ColDef<AdGroup> = {
 
 /**
  * 모음에 일괄로 담을 그룹은 체크박스로 고른다. 전체 선택은 검색·모음 필터로 걸러진 행 기준.
- * 행 클릭은 상세 시트를 여는 데 쓰므로 체크박스로만 선택한다.
+ * 행 클릭으로는 선택하지 않고 체크박스로만 고른다 (스위치·모음 셀 클릭이 선택으로 새지 않게).
  */
 const rowSelection: RowSelectionOptions<AdGroup> = {
   mode: "multiRow",
@@ -114,9 +111,6 @@ const selectionColumnDef: ColDef<AdGroup> = {
   resizable: false,
   suppressMovable: true,
 }
-
-/** 클릭해도 상세 시트를 열지 않는 열 — 체크박스·스위치·모음 드롭다운은 클릭이 조작이다 */
-const INTERACTIVE_COLS = new Set([SELECTION_COLUMN_ID, "queued", "collections"])
 
 interface QueuedCellParams {
   onToggle: (group: AdGroup, queued: boolean) => void
@@ -218,7 +212,7 @@ function CollectionsCell({
   )
 }
 
-// 현재 API(AdGroup)로 받을 수 있는 필드만 컬럼으로 둔다. 지역·기기·우선순위는 상세 시트에서 본다.
+// 현재 API(AdGroup)로 받을 수 있는 필드만 컬럼으로 둔다. 지역·기기·우선순위는 이 표에 두지 않는다.
 // 대기열(queued)과 입찰 상태(autobidEnabled)는 별개 — 대기열은 여기서 켜고, 입찰 시작/중지는 자동 입찰 페이지에서 한다.
 // 콜백과 모음 목록을 셀에 넘겨야 해서 컬럼 정의는 함수로 만든다 (컴포넌트에서 useMemo).
 const buildColumnDefs = (
@@ -318,7 +312,7 @@ function GridOverlay({
  * 입찰 시작/중지는 자동 입찰 페이지에서 한다 (큐 소속과 입찰 상태는 별개).
  * 체크박스로 고른 그룹은 [대기열에 넣기]로 한 번에 큐에 넣을 수 있다.
  * 모음(즐겨찾기): 필터 칩으로 걸러 보고, 모음 열이나 체크박스 선택 + [모음에 담기]로 담는다.
- * 그 외 열을 클릭하면 상세 시트가 열린다.
+ * 행을 클릭해도 아무것도 열리지 않는다 (상세 시트는 제거).
  */
 export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
   const { account } = useAccount()
@@ -367,20 +361,6 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     () => ({ query, collectionName: selectedCollection?.name ?? null }),
     [query, selectedCollection?.name]
   )
-
-  /** 체크박스·스위치·모음 셀을 제외한 셀 클릭은 상세 시트를 연다 */
-  function handleCellClicked(e: CellClickedEvent<AdGroup>) {
-    if (!e.data || INTERACTIVE_COLS.has(e.column.getColId())) return
-    const group = e.data
-    overlay.open(({ isOpen, close, unmount }) => (
-      <AdGroupDetailSheet
-        isOpen={isOpen}
-        close={close}
-        unmount={unmount}
-        group={group}
-      />
-    ))
-  }
 
   /** 대기열 스위치 — 그룹 하나를 큐에 넣거나 뺀다. 실패하면 훅이 스위치를 되돌리므로 여기서는 알림만 */
   const handleToggle = useCallback(
@@ -755,7 +735,6 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           selectionColumnDef={selectionColumnDef}
           onSelectionChanged={syncSelectedCount}
           onRowDataUpdated={syncSelectedCount}
-          onCellClicked={handleCellClicked}
           onSortChanged={refreshRowNumbers}
           onFilterChanged={refreshRowNumbers}
           quickFilterText={query}
@@ -763,7 +742,6 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           overlayComponent={GridOverlay}
           overlayComponentParams={overlayParams}
           suppressCellFocus
-          rowClass="cursor-pointer"
         />
       </div>
     </div>
