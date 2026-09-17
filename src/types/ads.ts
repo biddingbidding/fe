@@ -287,6 +287,17 @@ export interface AdGroupKeyword {
  * 자동입찰 큐의 한 항목 = 큐에 넣은 광고 그룹 + 입찰 상태(autobidEnabled) + 진행 상황.
  * GET /api/adgroups 와 같은 순서·필드로 온다. 서버 스키마: AutobidQueueItem
  */
+/**
+ * 서버가 판단한 그룹의 입찰 상태. 서버 스키마: AutobidQueueItem.bidState
+ * - RUNNING: 켠 뒤 검토가 한 번 이상 돌았다
+ * - WAITING: 켰지만 아직 첫 검토 전 (보통 1분 안팎)
+ * - NO_KEYWORDS: 켰지만 대상 키워드가 없어 할 일이 없다
+ * - AD_OFF: 켰지만 네이버에서 광고가 노출되지 않는다 (엔진은 그대로 검토한다)
+ * - STOPPED: 중지
+ */
+export type BidState =
+  "RUNNING" | "WAITING" | "NO_KEYWORDS" | "AD_OFF" | "STOPPED"
+
 export interface AutobidQueueItem extends AdGroup {
   /** 자동입찰 대상으로 등록된 키워드 수 */
   targetKeywords: number
@@ -296,6 +307,13 @@ export interface AutobidQueueItem extends AdGroup {
   lastRunAt: string | null
   /** 이 그룹에서 가장 최근에 네이버로 입찰가를 실제로 보낸 시각 (ISO). 바꾼 적 없으면 null */
   lastSentAt: string | null
+  /** 서버가 판단한 입찰 상태 */
+  bidState: BidState
+  /**
+   * 다음 검토 가능 시각 (ISO) — 키워드 중 가장 이른 "마지막 검토 + 우선순위 최소 대기".
+   * 워커 주기·요금제 한도 때문에 실제 검토는 더 늦을 수 있다. STOPPED·NO_KEYWORDS 면 null
+   */
+  nextRunAt: string | null
 }
 
 /** 큐 넣기·입찰 시작 응답의 그룹별 결과. 서버 스키마: AutobidQueueOpItem */

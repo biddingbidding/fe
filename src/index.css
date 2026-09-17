@@ -140,3 +140,29 @@
 .ag-cell.text-right .ag-input-field-input {
   text-align: right;
 }
+/*
+ * AG Grid — 자동입찰 대기열 행 강조 (lib/bid-state.ts 의 rowClass).
+ * 옅은 배경 + 왼쪽 색 막대. 호버·선택 색은 셀 영역 위에 덮이므로 막대는 ::after 로 그 위에 그려 항상 보이게 한다.
+ */
+.ag-row.bid-row-running {
+  --bid-row-color: var(--primary);
+}
+.ag-row.bid-row-waiting {
+  --bid-row-color: var(--color-amber-500);
+}
+.ag-row.bid-row-warning {
+  --bid-row-color: var(--destructive);
+}
+.ag-row:is(.bid-row-running, .bid-row-waiting, .bid-row-warning) {
+  background-color: color-mix(in oklab, var(--bid-row-color) 8%, var(--background));
+}
+.ag-row:is(.bid-row-running, .bid-row-waiting, .bid-row-warning)::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 3px;
+  background-color: var(--bid-row-color);
+  pointer-events: none;
+  z-index: 1;
+}

@@ -13,8 +13,16 @@ import {
   type CustomCellRendererProps,
   type CustomOverlayProps,
 } from "ag-grid-react"
-import { ChevronDown, FolderPlus, Plus, Search, X } from "lucide-react"
+import {
+  ChevronDown,
+  FolderPlus,
+  ListPlus,
+  Plus,
+  Search,
+  X,
+} from "lucide-react"
 import { overlay } from "overlay-kit"
+import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { AdGroupDetailSheet } from "@/components/ad-group-detail-sheet"
@@ -44,7 +52,10 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { useAccount } from "@/hooks/use-account"
 import { useAdGroups } from "@/hooks/use-ad-groups"
-import { useSetQueueMembership } from "@/hooks/use-autobid"
+import {
+  useAddToAutobidQueue,
+  useSetQueueMembership,
+} from "@/hooks/use-autobid"
 import {
   useCollections,
   useCreateCollection,
@@ -60,6 +71,7 @@ import {
   collectionsOf,
   nextCollectionColor,
 } from "@/lib/collection"
+import { routes } from "@/lib/pages"
 import { errorMessage } from "@/lib/toast"
 import type { AdGroup, Collection } from "@/types/ads"
 
@@ -274,6 +286,9 @@ const buildColumnDefs = (
 
 const getRowId: GetRowIdFunc<AdGroup> = ({ data }) => data.id
 
+/** 대기열에 넣지 못한 그룹을 토스트에 나열할 최대 개수. 넘치면 "외 N개" */
+const MAX_LISTED_ERRORS = 3
+
 function GridOverlay({
   overlayType,
   query,
@@ -301,6 +316,7 @@ function GridOverlay({
 /**
  * 캠페인/광고 그룹 목록. "대기열" 스위치로 그룹을 자동입찰 큐에 넣고 뺀다. 입찰 상태·광고 상태는 읽기 전용으로 보인다.
  * 입찰 시작/중지는 자동 입찰 페이지에서 한다 (큐 소속과 입찰 상태는 별개).
+ * 체크박스로 고른 그룹은 [대기열에 넣기]로 한 번에 큐에 넣을 수 있다.
  * 모음(즐겨찾기): 필터 칩으로 걸러 보고, 모음 열이나 체크박스 선택 + [모음에 담기]로 담는다.
  * 그 외 열을 클릭하면 상세 시트가 열린다.
  */
@@ -310,6 +326,9 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
   const { data: groups = [], isLoading } = useAdGroups(customerId)
   const loading = isLoading || (syncing && groups.length === 0)
   const { mutate: setQueueMembership } = useSetQueueMembership(customerId)
+  const { mutate: addGroupsToQueue, isPending: addingToQueue } =
+    useAddToAutobidQueue(customerId)
+  const navigate = useNavigate()
   const { data: collections = [] } = useCollections(customerId)
   const { mutateAsync: createCollection } = useCreateCollection(customerId)
   const { mutateAsync: updateCollection } = useUpdateCollection(customerId)
@@ -536,6 +555,63 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     [toggleMembership]
   )
 
+  /**
+   * 체크한 그룹들을 자동입찰 대기열에 한 번에 넣는다 (입찰은 시작하지 않는다).
+   * 이미 대기열에 있는 그룹은 빼고 보낸다. 성공하면 선택을 풀고, 실패한 그룹은 이름과 사유를 알린다.
+   */
+  const handleBulkAddToQueue = useCallback(() => {
+    const api = gridRef.current?.api
+    const selected = api?.getSelectedRows() ?? []
+    if (selected.length === 0) return
+    const targets = selected.filter((g) => !g.queued)
+    const already = selected.length - targets.length
+    if (targets.length === 0) {
+      toast.info(`선택한 그룹 ${selected.length}개는 이미 대기열에 있습니다.`)
+      api?.deselectAll()
+      return
+    }
+    const nameOf = new Map(targets.map((g) => [g.id, g.name]))
+    addGroupsToQueue(
+      targets.map((g) => g.id),
+      {
+        onSuccess: (result) => {
+          if (result.applied > 0) {
+            toast.success(
+              `그룹 ${result.applied}개를 대기열에 넣었습니다.` +
+                (already > 0 ? ` (이미 있던 ${already}개 제외)` : ""),
+              {
+                description: "입찰은 자동 입찰 페이지에서 시작합니다.",
+                action: {
+                  label: "자동 입찰로",
+                  onClick: () => void navigate(routes.bidding),
+                },
+              }
+            )
+          }
+          const failed = result.items.filter((i) => !i.ok)
+          if (failed.length > 0) {
+            const listed = failed
+              .slice(0, MAX_LISTED_ERRORS)
+              .map(
+                (i) =>
+                  `${nameOf.get(i.adGroupId) ?? i.adGroupId}: ${i.error ?? "알 수 없는 오류"}`
+              )
+            const rest = failed.length - listed.length
+            toast.error(`그룹 ${failed.length}개를 대기열에 넣지 못했습니다.`, {
+              description:
+                listed.join("\n") + (rest > 0 ? `\n외 ${rest}개` : ""),
+            })
+          }
+          api?.deselectAll()
+        },
+        onError: (err) =>
+          toast.error(
+            errorMessage(err, "선택한 그룹을 대기열에 넣지 못했습니다.")
+          ),
+      }
+    )
+  }, [addGroupsToQueue, navigate])
+
   /** 체크한 그룹들을 담은 새 모음 만들기 */
   const handleBulkCreateCollection = useCallback(() => {
     const api = gridRef.current?.api
@@ -583,6 +659,18 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           )}
         </InputGroup>
         <div className="flex items-center gap-2">
+          <Button
+            onClick={handleBulkAddToQueue}
+            disabled={selectedCount === 0 || addingToQueue}
+          >
+            <ListPlus />
+            {addingToQueue ? "넣는 중..." : "대기열에 넣기"}
+            {selectedCount > 0 && (
+              <Badge variant="secondary" className="tabular-nums">
+                {selectedCount}
+              </Badge>
+            )}
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={

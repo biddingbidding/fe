@@ -3,6 +3,7 @@ import type {
   CellClickedEvent,
   ColDef,
   GetRowIdFunc,
+  RowClassParams,
   GridApi,
   RowSelectionOptions,
   ValueFormatterParams,
@@ -15,6 +16,7 @@ import {
 import { ChevronDown } from "lucide-react"
 
 import { gridTheme, refreshRowNumbers, rowNumberColDef } from "@/lib/ag-grid"
+import { BID_STATE_META } from "@/lib/bid-state"
 import { formatDateTime, formatNumber } from "@/lib/format"
 import { rankRegionLabel } from "@/lib/rank-region"
 import { cn } from "@/lib/utils"
@@ -71,6 +73,51 @@ const formatLastSent = ({
 }: ValueFormatterParams<AutobidQueueItem, string | null>) =>
   value ? formatDateTime(value) : "-"
 
+/** 그룹명 셀 — 앞에 입찰 상태 점. 입찰 중이면 점이 퍼지는 효과로 돌고 있음을 보인다 */
+function GroupNameCell({
+  data,
+}: CustomCellRendererProps<AutobidQueueItem, string>) {
+  if (!data) return null
+  const meta = BID_STATE_META[data.bidState] ?? BID_STATE_META.STOPPED
+  return (
+    <div className="flex h-full min-w-0 items-center gap-2">
+      <span className="relative flex size-2 shrink-0" aria-hidden>
+        {data.bidState === "RUNNING" && (
+          <span
+            className={cn(
+              "absolute inline-flex size-full animate-ping rounded-full opacity-60",
+              meta.dotClass
+            )}
+          />
+        )}
+        <span
+          className={cn(
+            "relative inline-flex size-2 rounded-full",
+            meta.dotClass
+          )}
+        />
+      </span>
+      <span className="sr-only">{meta.label}</span>
+      <span className="truncate">{data.name}</span>
+    </div>
+  )
+}
+
+/** 그룹명 툴팁 — 상태 설명과 다음 검토 가능 시각 */
+function bidStateTooltip(item: AutobidQueueItem): string {
+  const meta = BID_STATE_META[item.bidState] ?? BID_STATE_META.STOPPED
+  const lines = [`${meta.label} — ${meta.description}`]
+  if (item.nextRunAt)
+    lines.push(`다음 검토 가능 ${formatDateTime(item.nextRunAt)}`)
+  return lines.join(" · ")
+}
+
+/** 행 강조 — 입찰 상태별 왼쪽 색 막대 + 옅은 배경 (index.css). 중지는 강조하지 않는다 */
+const getRowClass = ({ data }: RowClassParams<AutobidQueueItem>) => {
+  const rowClass = data ? BID_STATE_META[data.bidState]?.rowClass : null
+  return rowClass ? `cursor-pointer ${rowClass}` : "cursor-pointer"
+}
+
 /** 순위확인지역 열 — 클릭하면 행 선택 대신 선택 다이얼로그를 연다 */
 const RANK_REGION_COL_ID = "rankRegion"
 
@@ -101,7 +148,18 @@ const buildColumnDefs = (
 ): ColDef<AutobidQueueItem>[] => [
   rowNumberColDef<AutobidQueueItem>(),
   { field: "campaignName", headerName: "캠페인명", flex: 1, minWidth: 160 },
-  { field: "name", headerName: "그룹명", flex: 1, minWidth: 160 },
+  {
+    field: "name",
+    headerName: "그룹명",
+    flex: 1,
+    minWidth: 160,
+    cellRenderer: GroupNameCell,
+    tooltipValueGetter: ({ data }) =>
+      data ? bidStateTooltip(data) : undefined,
+    // "입찰 중" 같은 상태 문구로도 검색되게
+    getQuickFilterText: ({ data }) =>
+      data ? `${data.name} ${BID_STATE_META[data.bidState]?.label ?? ""}` : "",
+  },
   {
     field: "targetKeywords",
     headerName: "키워드",
@@ -238,7 +296,7 @@ export function AutobidQueueGrid({
       overlayComponent={GridOverlay}
       overlayComponentParams={overlayParams}
       suppressCellFocus
-      rowClass="cursor-pointer"
+      getRowClass={getRowClass}
     />
   )
 }
