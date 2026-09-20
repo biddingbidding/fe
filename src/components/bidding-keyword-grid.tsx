@@ -59,6 +59,7 @@ import {
   toSettingValue,
 } from "@/lib/bid-setting-rules"
 import { formatDateTime, formatNumber } from "@/lib/format"
+import { openKeywordBidLogDialog } from "@/lib/overlays"
 import {
   STATS_PERIOD_OPTIONS,
   formatStatsPeriod,
@@ -172,6 +173,22 @@ const formatWon = ({
 }: ValueFormatterParams<AdGroupKeyword, number | null>) =>
   value == null ? "" : `${formatNumber(value)}원`
 
+/** 그룹 기본 입찰가를 따르는 키워드의 표시 문구 — 값 자체는 네이버가 키워드 응답에 주지 않는다 */
+const GROUP_BID_LABEL = "그룹 기본"
+
+/**
+ * 지금 네이버에 설정되어 있는 입찰가. useGroupBidAmt 면 키워드 값이 아니라 그룹 기본 입찰가로 노출되므로
+ * 금액 대신 "그룹 기본" 으로 보인다 (자동입찰이 값을 바꾸면 키워드 자체 입찰가로 전환된다).
+ */
+const formatCurrentBid = ({
+  data,
+  value,
+}: ValueFormatterParams<AdGroupKeyword, number | null>) => {
+  if (!data) return ""
+  if (data.useGroupBidAmt) return GROUP_BID_LABEL
+  return value == null ? "" : `${formatNumber(value)}원`
+}
+
 // 희망순위는 "3/15" 처럼 최대 순위(RANK_MAX)를 접미사로 붙여 범위를 함께 보여준다.
 // 미입력 셀에도 "/15" 를 기본으로 보여 입력 가능한 범위를 알 수 있게 한다. (복사·내보내기용 문자열)
 const formatRank = ({
@@ -188,6 +205,23 @@ function RankCell({
       <span className="flex-1 text-center">{value ?? ""}</span>
       <span className="text-muted-foreground">/{RANK_MAX}</span>
     </span>
+  )
+}
+
+/** 자동입찰 대상 키워드의 이름 — 누르면 그 키워드의 입찰 기록(그래프·표)이 뜬다 */
+function KeywordLogCell({
+  data,
+  value,
+}: CustomCellRendererProps<AdGroupKeyword, string>) {
+  if (!data) return value
+  return (
+    <button
+      type="button"
+      onClick={() => openKeywordBidLogDialog(data)}
+      className="font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+    >
+      {value}
+    </button>
   )
 }
 
@@ -345,6 +379,25 @@ const buildColumnDefs = (
     headerName: "키워드",
     ...fit(200),
     cellClass: "font-medium text-center",
+    // 자동입찰 대상만 보는 중이면 기록이 있을 수 있으니 이름을 눌러 입찰 기록을 연다
+    ...(withAutobid && {
+      cellRenderer: KeywordLogCell,
+      tooltipValueGetter: () => "눌러서 입찰 기록 보기",
+    }),
+  },
+  {
+    field: "bidAmt",
+    headerName: "현재 입찰가",
+    ...fit(120),
+    cellClass: ({ data }) =>
+      data?.useGroupBidAmt
+        ? "tabular-nums text-right text-muted-foreground"
+        : "tabular-nums text-right",
+    valueFormatter: formatCurrentBid,
+    tooltipValueGetter: ({ data }) =>
+      data?.useGroupBidAmt
+        ? "그룹 기본 입찰가를 따르는 키워드입니다. 자동입찰이 입찰가를 바꾸면 키워드 자체 입찰가로 바뀝니다"
+        : "지금 네이버에 설정된 키워드 입찰가입니다",
   },
   {
     colId: "targetRank",

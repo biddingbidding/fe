@@ -29,4 +29,7 @@ export const queryKeys = {
   autobidQueue: (customerId: string) => ["autobidQueue", customerId] as const,
   /** 계정 단위 자동입찰 현황 배지 */
   autobidStatus: (customerId: string) => ["autobidStatus", customerId] as const,
+  /** 키워드 하나의 하루치(한국 날짜) 입찰 기록 */
+  keywordBidLogs: (adGroupId: string, keywordId: string, date: string) =>
+    ["keywordBidLogs", adGroupId, keywordId, date] as const,
 }
