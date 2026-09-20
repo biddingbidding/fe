@@ -39,14 +39,20 @@ export function useRankRegions(enabled = true) {
   })
 }
 
+/** 입찰 중인 그룹을 볼 때의 자동 갱신 간격 — 워커 주기(60초)와 같다 */
+export const KEYWORDS_LIVE_REFETCH_MS = 60_000
+
 /**
  * 광고 그룹의 키워드 목록 (+ 입찰 설정, period 기간 통계, 자동입찰 상태). adGroupId 가 없으면 조회하지 않는다.
  * autobidOnly 가 true 면 자동입찰 대상으로 등록된 키워드만 (자동 입찰 페이지의 큐 항목 화면용).
+ * live 가 true 면 60초마다 다시 받아 엔진이 바꾼 현재 입찰가를 따라간다 — 네이버 실시간 호출이므로
+ * 입찰 중인 그룹을 보고 있을 때만 켠다. 셀을 편집하는 동안에는 호출부가 꺼서 입력이 끊기지 않게 한다.
  */
 export function useAdGroupKeywords(
   adGroupId: string | null,
   period: StatsPeriod = "last7days",
-  autobidOnly = false
+  autobidOnly = false,
+  live = false
 ) {
   return useQuery({
     queryKey: queryKeys.adGroupKeywords(adGroupId ?? "", {
@@ -56,6 +62,7 @@ export function useAdGroupKeywords(
     queryFn: () => api.getAdGroupKeywords(adGroupId!, period, autobidOnly),
     enabled: !!adGroupId,
     staleTime: 60_000,
+    refetchInterval: live ? KEYWORDS_LIVE_REFETCH_MS : false,
   })
 }
 

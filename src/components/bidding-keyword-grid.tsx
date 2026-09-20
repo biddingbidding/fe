@@ -500,6 +500,10 @@ export function BiddingKeywordGrid({
 }: BiddingKeywordGridProps) {
   const adGroupId = group?.id ?? null
   const gridRef = useRef<AgGridReact<AdGroupKeyword>>(null)
+  // 셀을 편집하는 동안에는 자동 갱신을 멈춘다 (목록이 갈아끼워지면 입력이 끊긴다)
+  const [editing, setEditing] = useState(false)
+  // 입찰 중인 그룹을 보고 있으면 엔진 주기(60초)에 맞춰 현재 입찰가·최근 검토를 따라간다
+  const live = !!group?.autobidEnabled && !editing
   // 툴바 버튼 활성화·개수 표시용. 실제 대상 행은 클릭 시점에 그리드에서 다시 읽는다.
   const [selectedCount, setSelectedCount] = useState(0)
   // 마지막으로 고른 기간을 브라우저에 저장해 다음에도 같은 기간으로 연다
@@ -515,7 +519,7 @@ export function BiddingKeywordGrid({
     isFetching,
     error,
     refetch,
-  } = useAdGroupKeywords(adGroupId, statsPeriod, autobidOnly)
+  } = useAdGroupKeywords(adGroupId, statsPeriod, autobidOnly, live)
   const updateSetting = useUpdateKeywordSetting(adGroupId)
   const bulkUpdate = useBulkUpdateKeywordSettings(adGroupId)
 
@@ -659,7 +663,9 @@ export function BiddingKeywordGrid({
             >
               <RefreshCw className={isFetching ? "animate-spin" : undefined} />
             </TooltipTrigger>
-            <TooltipContent>키워드를 다시 불러옵니다</TooltipContent>
+            <TooltipContent>
+              키워드를 다시 불러옵니다 (입찰 중인 그룹은 60초마다 자동 갱신)
+            </TooltipContent>
           </Tooltip>
           <InputGroup className="w-64">
             <InputGroupAddon>
@@ -698,6 +704,8 @@ export function BiddingKeywordGrid({
           selectionColumnDef={selectionColumnDef}
           onSelectionChanged={syncSelectedCount}
           onRowDataUpdated={syncSelectedCount}
+          onCellEditingStarted={() => setEditing(true)}
+          onCellEditingStopped={() => setEditing(false)}
           quickFilterText={query}
           loading={isLoading}
           overlayComponent={GridOverlay}
