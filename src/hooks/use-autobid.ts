@@ -61,12 +61,30 @@ export function useAddToAutobidQueue(customerId: string | undefined) {
   })
 }
 
-/** 그룹들을 큐에서 뺀다 (DELETE /api/autobid/queue). 입찰 중이면 같이 멈춘다. 실제로 빠진 그룹 수를 돌려준다. */
+/**
+ * 그룹들을 큐에서 뺀다 (DELETE /api/autobid/queue). 입찰 중이면 같이 멈춘다. 실제로 빠진 그룹 수를 돌려준다.
+ * 자동 입찰 페이지의 표에서 행이 바로 사라지도록 큐 캐시에서 먼저 지우고, 실패하면 되돌린다.
+ */
 export function useRemoveFromAutobidQueue(customerId: string | undefined) {
+  const queryClient = useQueryClient()
+  const key = queryKeys.autobidQueue(customerId ?? "")
   const invalidate = useInvalidateAutobid(customerId)
+
   return useMutation({
     mutationFn: async (adGroupIds: string[]) =>
       (await api.removeFromAutobidQueue(adGroupIds)).count,
+    onMutate: async (adGroupIds) => {
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<AutobidQueueItem[]>(key)
+      const ids = new Set(adGroupIds)
+      queryClient.setQueryData<AutobidQueueItem[]>(key, (prev) =>
+        prev?.filter((g) => !ids.has(g.id))
+      )
+      return { previous }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(key, ctx.previous)
+    },
     onSettled: () => invalidate(),
   })
 }

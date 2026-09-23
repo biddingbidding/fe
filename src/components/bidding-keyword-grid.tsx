@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type {
   CellEditRequestEvent,
   ColDef,
@@ -17,6 +17,7 @@ import {
   type CustomOverlayProps,
 } from "ag-grid-react"
 import {
+  ChartLine,
   ChevronDown,
   RefreshCw,
   Search,
@@ -58,7 +59,9 @@ import {
   RANK_MAX,
   toSettingValue,
 } from "@/lib/bid-setting-rules"
+import { deviceLabel } from "@/lib/device"
 import { formatDateTime, formatNumber } from "@/lib/format"
+import { openNaverSearch } from "@/lib/naver"
 import { openKeywordBidLogDialog } from "@/lib/overlays"
 import {
   STATS_PERIOD_OPTIONS,
@@ -71,6 +74,7 @@ import { errorMessage } from "@/lib/toast"
 import type {
   AdGroup,
   AdGroupKeyword,
+  Device,
   BidSettingValues,
   KeywordStats,
   StatsPeriod,
@@ -208,20 +212,47 @@ function RankCell({
   )
 }
 
-/** 자동입찰 대상 키워드의 이름 — 누르면 그 키워드의 입찰 기록(그래프·표)이 뜬다 */
-function KeywordLogCell({
+/** 셀 렌더러가 쓰는 값 — 검색 결과를 어느 기기로 볼지, 입찰 기록 아이콘을 붙일지 */
+interface KeywordGridContext {
+  device: Device
+  withAutobid: boolean
+}
+
+/**
+ * 키워드 이름 셀 — 이름을 누르면 그 키워드의 네이버 검색 결과가 새 탭으로 열린다
+ * (그룹의 기기 설정이 모바일이면 m.search.naver.com).
+ * 자동입찰 대상만 보는 중이면 오른쪽 아이콘으로 입찰 기록(그래프·표)을 연다.
+ */
+function KeywordCell({
   data,
   value,
+  context,
 }: CustomCellRendererProps<AdGroupKeyword, string>) {
   if (!data) return value
+  const keyword = data
+  const { device, withAutobid } = context as KeywordGridContext
   return (
-    <button
-      type="button"
-      onClick={() => openKeywordBidLogDialog(data)}
-      className="font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
-    >
-      {value}
-    </button>
+    <div className="flex h-full items-center justify-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => openNaverSearch(keyword.keyword, device)}
+        title={`네이버 ${deviceLabel(device)} 검색으로 열기`}
+        className="truncate font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+      >
+        {value}
+      </button>
+      {withAutobid && (
+        <button
+          type="button"
+          onClick={() => openKeywordBidLogDialog(keyword)}
+          title="입찰 기록 보기"
+          aria-label={`${keyword.keyword} 입찰 기록 보기`}
+          className="shrink-0 text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+        >
+          <ChartLine className="size-3.5" />
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -337,6 +368,29 @@ const formatAutobidTime = ({
   value ? formatDateTime(value) : "-"
 
 /**
+ * 현재 순위 열 — 마지막 검토에서 결정한 입찰가의 예상 순위. 현재 입찰가 바로 오른쪽에 둬서
+ * "지금 이 값으로 몇 위" 로 읽히게 한다. 자동입찰 대상만 보는 중일 때만 붙는다 (그 밖에는 값이 없다).
+ * 순위 축 끝(PC 10 · 모바일 5)을 넘으면 그 밖이라는 뜻이라 "10위 밖" 으로 보인다.
+ */
+const lastRankCol: ColDef<AdGroupKeyword> = {
+  colId: "lastRank",
+  headerName: "현재 순위",
+  ...fit(100),
+  cellClass: "tabular-nums text-center",
+  valueGetter: ({ data }) => data?.autobid?.lastRank ?? null,
+  valueFormatter: ({ data }) => {
+    const rank = data?.autobid?.lastRank
+    if (rank == null) return "-"
+    const max = data?.autobid?.lastMaxPosition
+    return max != null && rank > max ? `${max}위 밖` : `${rank}위`
+  },
+  tooltipValueGetter: ({ data }) =>
+    data?.autobid?.lastRank == null
+      ? "아직 순위를 계산하지 못했습니다 (검토 전이거나 네이버 예상가를 못 받음)"
+      : "마지막 검토 시점의 예상 순위입니다. 네이버 예상 입찰가로 추정한 값이라 실제 노출 순위와 다를 수 있습니다",
+}
+
+/**
  * "자동입찰" 그룹 — 엔진이 마지막으로 계산한 입찰가와 검토 시각. autobidOnly 모드(자동 입찰 페이지)에서만 붙인다.
  * lastReason 은 셀 툴팁으로 보인다.
  */
@@ -379,11 +433,7 @@ const buildColumnDefs = (
     headerName: "키워드",
     ...fit(200),
     cellClass: "font-medium text-center",
-    // 자동입찰 대상만 보는 중이면 기록이 있을 수 있으니 이름을 눌러 입찰 기록을 연다
-    ...(withAutobid && {
-      cellRenderer: KeywordLogCell,
-      tooltipValueGetter: () => "눌러서 입찰 기록 보기",
-    }),
+    cellRenderer: KeywordCell,
   },
   {
     field: "bidAmt",
@@ -399,6 +449,7 @@ const buildColumnDefs = (
         ? "그룹 기본 입찰가를 따르는 키워드입니다. 자동입찰이 입찰가를 바꾸면 키워드 자체 입찰가로 바뀝니다"
         : "지금 네이버에 설정된 키워드 입찰가입니다",
   },
+  ...(withAutobid ? [lastRankCol] : []),
   {
     colId: "targetRank",
     headerName: "희망순위",
@@ -531,6 +582,17 @@ export function BiddingKeywordGrid({
       ),
     [statsPeriod, setStatsPeriod, autobidOnly]
   )
+
+  // 키워드 셀이 쓰는 값 — 그룹 기기(네이버 검색을 PC/모바일 중 어디로 열지)
+  const context = useMemo<KeywordGridContext>(
+    () => ({ device: group?.device ?? "PC", withAutobid: autobidOnly }),
+    [group?.device, autobidOnly]
+  )
+
+  // 키워드 행은 그대로인데 기기만 바뀌면 그리드가 셀을 다시 그리지 않아, 열린 링크가 옛 기기로 남는다
+  useEffect(() => {
+    gridRef.current?.api?.refreshCells({ force: true, columns: ["keyword"] })
+  }, [context])
 
   const [search, setSearch] = useState("")
   const query = search.trim()
@@ -700,6 +762,7 @@ export function BiddingKeywordGrid({
           getRowId={getRowId}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          context={context}
           rowSelection={rowSelection}
           selectionColumnDef={selectionColumnDef}
           onSelectionChanged={syncSelectedCount}

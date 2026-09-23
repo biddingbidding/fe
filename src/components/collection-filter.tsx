@@ -1,4 +1,4 @@
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
+import { Gavel, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -19,6 +19,12 @@ interface CollectionFilterProps {
   onSelect: (id: string | null) => void
   /** 전체 그룹 수 ("전체" 칩의 개수 표시) */
   total: number
+  /** 자동입찰 대기열에 들어 있는 그룹 수 ("대기열" 칩의 개수 표시) */
+  queuedCount: number
+  /** "대기열" 칩이 켜져 있는지 (모음 선택과 배타) */
+  queuedSelected: boolean
+  /** "대기열" 칩 클릭 — 켜고 끈다 */
+  onSelectQueued: () => void
   onCreate: () => void
   onEdit: (collection: Collection) => void
   onDelete: (collection: Collection) => void
@@ -42,7 +48,7 @@ export function CollectionDot({
 }
 
 /**
- * 그리드 위의 모음(즐겨찾기) 필터 칩 줄 — "전체" 와 모음들. 칩을 누르면 그 모음의 그룹만 보인다.
+ * 그리드 위의 필터 칩 줄 — "전체" · "대기열" · 모음들. 셋 중 하나만 켜진다. 칩을 누르면 그 모음의 그룹만 보인다.
  * 선택된 모음 칩의 ⋯ 로 이름·색 수정, 삭제. 맨 뒤 + 로 새 모음.
  */
 export function CollectionFilter({
@@ -50,6 +56,9 @@ export function CollectionFilter({
   selected,
   onSelect,
   total,
+  queuedCount,
+  queuedSelected,
+  onSelectQueued,
   onCreate,
   onEdit,
   onDelete,
@@ -60,9 +69,18 @@ export function CollectionFilter({
       role="tablist"
       aria-label="모음 필터"
     >
-      <Chip active={selected === null} onClick={() => onSelect(null)}>
+      <Chip
+        active={selected === null && !queuedSelected}
+        onClick={() => onSelect(null)}
+      >
         전체
         <Count n={total} />
+      </Chip>
+      {/* 자동입찰 대기열에 넣어 둔 그룹만 — 모음과 같은 줄에 두되 배타로 고른다 */}
+      <Chip active={queuedSelected} onClick={onSelectQueued}>
+        <Gavel className="size-3.5 opacity-70" />
+        대기열
+        <Count n={queuedCount} />
       </Chip>
       {collections.map((c) => {
         const active = selected === c.id

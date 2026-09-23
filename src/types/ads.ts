@@ -44,6 +44,11 @@ export interface AdGroup {
   /** 우선순위. 미입력이면 null (보통으로 동작) */
   priority: Priority | null
   /**
+   * 가감액 1단계 — 켜면 한 번 검토에 가감액을 1회만 더하거나 뺀다.
+   * 기본(false)은 순위차(|현재순위 − 희망순위|)만큼 곱해 한 번에 움직인다.
+   */
+  singleStep: boolean
+  /**
    * 순위확인지역 — 어느 지역에서 검색했을 때의 순위를 볼지. GET /api/regions/rank 의 code
    * (법정동코드 10자리, 시/도 또는 시/군/구). 미설정이면 null. 노출 지역(region)과는 별개
    */
@@ -122,7 +127,7 @@ export interface AdGroupRegionBulkResult {
 
 /** 그룹 설정 중 사용자가 바꾸는 값. 서버 스키마: AdGroupSettingPatch / AdGroupSettingApplyAll (보낸 필드만 반영) */
 export type AdGroupSettingPatch = Partial<
-  Pick<AdGroupSetting, "device" | "priority" | "rankRegion">
+  Pick<AdGroupSetting, "device" | "priority" | "rankRegion" | "singleStep">
 >
 
 /** PUT /api/adgroups/settings (모든 그룹에 적용) 응답 */
@@ -136,6 +141,7 @@ export interface AdGroupSetting {
   adGroupId: string
   device: Device
   priority: Priority | null
+  singleStep: boolean
   rankRegion: string | null
   rankRegionName: string | null
   /** 마지막 저장 시각 (ISO) */
@@ -241,6 +247,13 @@ export interface AutobidState {
   lastReason: string | null
   /** 마지막으로 네이버에 입찰가를 보낸 시각 (ISO) */
   lastSentAt: string | null
+  /**
+   * 마지막 검토에서 결정한 입찰가의 예상 순위. 네이버 예상 입찰가로 추정한 값이지 실제 노출 순위가 아니다.
+   * 순위 추정이 꺼져 있거나 예상가를 못 받았으면 null. lastMaxPosition + 1 이면 순위 밖
+   */
+  lastRank: number | null
+  /** 그때 기기의 순위 축 끝 (PC 10 · 모바일 5). lastRank 가 null 이면 null */
+  lastMaxPosition: number | null
   /** 다음 검토 예정 시각 (ISO) */
   nextRunAt: string | null
 }

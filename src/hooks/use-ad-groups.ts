@@ -191,6 +191,7 @@ export function useUpdateAdGroupSetting(customerId: string | undefined) {
       mergeInto(setting.adGroupId, {
         device: setting.device,
         priority: setting.priority,
+        singleStep: setting.singleStep,
         rankRegion: setting.rankRegion,
         rankRegionName: setting.rankRegionName,
       }),

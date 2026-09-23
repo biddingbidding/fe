@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   ArrowRight,
   Gavel,
+  ListX,
   Play,
   RefreshCw,
   Search,
@@ -39,13 +40,16 @@ import { useRankRegions, useUpdateAdGroupSetting } from "@/hooks/use-ad-groups"
 import {
   useAutobidQueue,
   useAutobidStatus,
+  useRemoveFromAutobidQueue,
   useStartAutobid,
   useStopAutobid,
 } from "@/hooks/use-autobid"
+import { deviceLabel } from "@/lib/device"
 import { formatDateTime, formatNumber } from "@/lib/format"
 import { routes } from "@/lib/pages"
 import { rankRegionLabel } from "@/lib/rank-region"
-import type { AutobidQueueItem, AutobidStatus } from "@/types/ads"
+import { errorMessage } from "@/lib/toast"
+import type { AutobidQueueItem, AutobidStatus, Device } from "@/types/ads"
 
 /** 실패한 그룹을 토스트에 나열할 최대 개수. 넘치면 "외 N개" */
 const MAX_LISTED_ERRORS = 3
@@ -102,10 +106,26 @@ export function BiddingPage() {
   const updateSetting = useUpdateAdGroupSetting(customerId)
   const startAutobid = useStartAutobid(customerId)
   const stopAutobid = useStopAutobid(customerId)
-  const busy = startAutobid.isPending || stopAutobid.isPending
+  const removeFromQueue = useRemoveFromAutobidQueue(customerId)
+  const busy =
+    startAutobid.isPending || stopAutobid.isPending || removeFromQueue.isPending
   const items = queue.data ?? []
   const stoppedItems = items.filter((g) => !g.autobidEnabled)
   const runningItems = items.filter((g) => g.autobidEnabled)
+
+  /**
+   * 체크박스로 고른 그룹 id — 대기열 빼기 대상. 표에서 사라지면 그리드가 알아서 체크를 푼다.
+   * 항목이 아니라 id 를 들고 있다가 최신 목록에서 다시 찾는다 (60초마다 갱신되므로 항목은 갈아끼워진다).
+   * 같은 내용이면 상태를 그대로 두어, 그리드 갱신 → setState → 재렌더가 되풀이되지 않게 한다.
+   */
+  const [checkedIds, setCheckedIds] = useState<string[]>([])
+  const handleCheckedChange = useCallback((rows: AutobidQueueItem[]) => {
+    setCheckedIds((prev) =>
+      prev.length === rows.length && prev.every((id, i) => id === rows[i].id)
+        ? prev
+        : rows.map((g) => g.id)
+    )
+  }, [])
 
   const [params, setParams] = useSearchParams()
   const groupParam = params.get("group")
@@ -216,6 +236,92 @@ export function BiddingPage() {
         }}
       />
     ))
+  }
+
+  /**
+   * 체크한 그룹들을 대기열에서 뺀다 (체크가 없으면 보고 있는 그룹 하나).
+   * 입찰 중인 그룹은 서버가 같이 멈춘다.
+   * 키워드 설정(희망순위·한도·가감액)은 지워지지 않아, 다시 넣으면 예전 설정으로 이어진다.
+   */
+  function handleRemoveFromQueue(targets: AutobidQueueItem[]) {
+    if (targets.length === 0) return
+    const running = targets.filter((g) => g.autobidEnabled).length
+    overlay.open(({ isOpen, close, unmount }) => (
+      <ConfirmDialog
+        isOpen={isOpen}
+        close={close}
+        unmount={unmount}
+        title="대기열에서 뺄까요?"
+        description={
+          <>
+            {targets.length === 1 ? (
+              <>
+                <b>{targets[0].name}</b> 그룹을 대기열에서 뺍니다.
+              </>
+            ) : (
+              <>
+                체크한 <b>{targets.length}개</b> 그룹을 대기열에서 뺍니다.
+              </>
+            )}
+            {running > 0 &&
+              (targets.length === 1
+                ? " 입찰 중이므로 입찰도 함께 중지됩니다."
+                : ` 그중 입찰 중인 ${running}개는 입찰도 함께 중지됩니다.`)}{" "}
+            희망순위·입찰가 한도 등 키워드 설정은 지워지지 않습니다.
+          </>
+        }
+        confirmLabel="대기열에서 빼기"
+        pendingLabel="빼는 중..."
+        destructive
+        onConfirm={async () => {
+          const count = await removeFromQueue.mutateAsync(
+            targets.map((g) => g.id)
+          )
+          toast.success(
+            targets.length === 1
+              ? `${targets[0].name} 그룹을 대기열에서 뺐습니다.`
+              : `그룹 ${count}개를 대기열에서 뺐습니다.`
+          )
+        }}
+      />
+    ))
+  }
+
+  // 체크한 그룹이 있으면 그것들을, 없으면 보고 있는 그룹 하나를 뺀다
+  const checked = items.filter((g) => checkedIds.includes(g.id))
+  const removeTargets =
+    checked.length > 0 ? checked : activeItem ? [activeItem] : []
+
+  /** 기기 드롭다운 선택 — 바로 저장한다. 실패하면 캐시가 되돌아가고 토스트로 알린다 */
+  function handleChangeDevice(item: AutobidQueueItem, device: Device) {
+    if (item.device === device) return
+    updateSetting
+      .mutateAsync({ adGroupId: item.id, patch: { device } })
+      .then(() =>
+        toast.success(
+          `${item.name} 그룹의 기기를 ${deviceLabel(device)}(으)로 설정했습니다.`
+        )
+      )
+      .catch((err: unknown) =>
+        toast.error(errorMessage(err, "기기를 저장하지 못했습니다."))
+      )
+  }
+
+  /** 입찰 속도 드롭다운 — 바로 저장한다. 실패하면 캐시가 되돌아가고 토스트로 알린다 */
+  function handleChangeBidSpeed(item: AutobidQueueItem, singleStep: boolean) {
+    if (item.singleStep === singleStep) return
+    updateSetting
+      .mutateAsync({ adGroupId: item.id, patch: { singleStep } })
+      .then(() =>
+        toast.success(
+          singleStep
+            ? `${item.name} 그룹의 입찰 속도를 천천히로 바꿨습니다. 한 번에 가감액 1회만 움직입니다.`
+            : `${item.name} 그룹의 입찰 속도를 빠르게로 바꿨습니다. 순위가 밀린 칸수만큼 가감액을 곱해 움직입니다.`
+        )
+      )
+      .catch((err: unknown) =>
+        toast.error(errorMessage(err, "입찰 속도를 저장하지 못했습니다."))
+      )
   }
 
   /** 순위확인지역 셀 클릭 — 다이얼로그에서 고르면 바로 저장한다 (실패하면 다이얼로그에 오류) */
@@ -340,6 +446,33 @@ export function BiddingPage() {
                 <TooltipTrigger
                   render={
                     <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRemoveFromQueue(removeTargets)}
+                      disabled={busy || removeTargets.length === 0}
+                    />
+                  }
+                >
+                  <ListX />
+                  대기열에서 빼기
+                  {checked.length > 0 && (
+                    <Badge variant="secondary" className="tabular-nums">
+                      {checked.length}
+                    </Badge>
+                  )}
+                </TooltipTrigger>
+                <TooltipContent>
+                  {checked.length > 0
+                    ? `체크한 그룹 ${checked.length}개를 대기열에서 뺍니다 (입찰 중이면 함께 중지)`
+                    : activeItem
+                      ? `보고 있는 ${activeItem.name} 그룹을 대기열에서 뺍니다. 왼쪽 체크박스로 여러 개를 한 번에 뺄 수도 있습니다`
+                      : "대기열에서 뺄 그룹을 체크하세요"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
                       size="icon-sm"
                       variant="outline"
                       onClick={() => void queue.refetch()}
@@ -390,6 +523,9 @@ export function BiddingPage() {
               onSelect={selectItem}
               rankRegions={rankRegions}
               onEditRankRegion={handleEditRankRegion}
+              onChangeDevice={handleChangeDevice}
+              onCheckedChange={handleCheckedChange}
+              onChangeBidSpeed={handleChangeBidSpeed}
             />
           </div>
         </div>

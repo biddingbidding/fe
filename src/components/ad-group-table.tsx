@@ -84,6 +84,8 @@ interface OverlayParams {
   query: string
   /** 선택된 모음 이름. 모음 필터 중이면 "이 모음에 담긴 그룹이 없다" 로 안내 */
   collectionName: string | null
+  /** 대기열 칩으로 거르는 중이면 "대기열이 비어 있다" 로 안내 */
+  queuedOnly: boolean
 }
 
 const defaultColDef: ColDef<AdGroup> = {
@@ -287,6 +289,7 @@ function GridOverlay({
   overlayType,
   query,
   collectionName,
+  queuedOnly,
 }: CustomOverlayProps<AdGroup> & OverlayParams) {
   let message: string
   switch (overlayType) {
@@ -294,9 +297,11 @@ function GridOverlay({
       message = "불러오는 중..."
       break
     case "noRows":
-      message = collectionName
-        ? `"${collectionName}" 모음에 담긴 그룹이 없습니다. 그룹의 모음 열에서 담을 수 있습니다.`
-        : "[계정 동기화] 버튼을 눌러 캠페인과 광고 그룹을 불러오세요."
+      message = queuedOnly
+        ? "대기열에 넣은 그룹이 없습니다. 오른쪽 [대기열] 스위치로 넣으세요."
+        : collectionName
+          ? `"${collectionName}" 모음에 담긴 그룹이 없습니다. 그룹의 모음 열에서 담을 수 있습니다.`
+          : "[계정 동기화] 버튼을 눌러 캠페인과 광고 그룹을 불러오세요."
       break
     case "noMatchingRows":
       message = query ? "검색 결과가 없습니다." : "광고 그룹이 없습니다."
@@ -311,7 +316,8 @@ function GridOverlay({
  * 캠페인/광고 그룹 목록. "대기열" 스위치로 그룹을 자동입찰 큐에 넣고 뺀다. 입찰 상태·광고 상태는 읽기 전용으로 보인다.
  * 입찰 시작/중지는 자동 입찰 페이지에서 한다 (큐 소속과 입찰 상태는 별개).
  * 체크박스로 고른 그룹은 [대기열에 넣기]로 한 번에 큐에 넣을 수 있다.
- * 모음(즐겨찾기): 필터 칩으로 걸러 보고, 모음 열이나 체크박스 선택 + [모음에 담기]로 담는다.
+ * 필터 칩: [전체] · [대기열](자동입찰 큐에 넣어 둔 그룹만) · 모음들 중 하나가 걸린다.
+ * 모음(즐겨찾기): 칩으로 걸러 보고, 모음 열이나 체크박스 선택 + [모음에 담기]로 담는다.
  * 행을 클릭해도 아무것도 열리지 않는다 (상세 시트는 제거).
  */
 export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
@@ -342,25 +348,42 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
   const [search, setSearch] = useState("")
   const query = search.trim()
 
-  // 모음 필터 — 선택된 모음에 담긴 그룹만 그리드에 넣는다 (서버는 collectionIds 만 주고 필터는 프론트 몫).
-  // 선택한 모음이 삭제되면 전체로 돌아간다.
+  // 필터 칩 — 전체 / 대기열 / 모음 중 하나만 걸린다 (서버는 걸러 주지 않고 프론트에서 추린다).
+  // 모음: 선택한 모음이 삭제되면 전체로 돌아간다. 대기열: 자동입찰 큐에 넣어 둔 그룹(queued)만.
   const [selectedCollectionId, setSelectedCollectionId] = useState<
     string | null
   >(null)
+  const [queuedOnly, setQueuedOnly] = useState(false)
   const selectedCollection =
     collections.find((c) => c.id === selectedCollectionId) ?? null
   const scopeId = selectedCollection?.id ?? null
-  const visibleGroups = useMemo(
-    () =>
-      scopeId
-        ? groups.filter((g) => g.collectionIds.includes(scopeId))
-        : groups,
-    [groups, scopeId]
-  )
+  const queuedCount = groups.filter((g) => g.queued).length
+  const visibleGroups = useMemo(() => {
+    if (queuedOnly) return groups.filter((g) => g.queued)
+    return scopeId
+      ? groups.filter((g) => g.collectionIds.includes(scopeId))
+      : groups
+  }, [groups, scopeId, queuedOnly])
   const overlayParams = useMemo<OverlayParams>(
-    () => ({ query, collectionName: selectedCollection?.name ?? null }),
-    [query, selectedCollection?.name]
+    () => ({
+      query,
+      collectionName: selectedCollection?.name ?? null,
+      queuedOnly,
+    }),
+    [query, selectedCollection?.name, queuedOnly]
   )
+
+  /** 모음 칩 — 대기열 칩과 배타 */
+  function selectCollection(id: string | null) {
+    setQueuedOnly(false)
+    setSelectedCollectionId(id)
+  }
+
+  /** 대기열 칩 — 다시 누르면 전체로 돌아간다 */
+  function toggleQueuedOnly() {
+    setSelectedCollectionId(null)
+    setQueuedOnly((prev) => !prev)
+  }
 
   /** 대기열 스위치 — 그룹 하나를 큐에 넣거나 뺀다. 실패하면 훅이 스위치를 되돌리므로 여기서는 알림만 */
   const handleToggle = useCallback(
@@ -715,8 +738,11 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
       <CollectionFilter
         collections={collections}
         selected={scopeId}
-        onSelect={setSelectedCollectionId}
+        onSelect={selectCollection}
         total={groups.length}
+        queuedCount={queuedCount}
+        queuedSelected={queuedOnly}
+        onSelectQueued={toggleQueuedOnly}
         onCreate={() => openCreateCollection()}
         onEdit={handleEditCollection}
         onDelete={handleDeleteCollection}

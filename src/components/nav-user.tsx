@@ -63,7 +63,7 @@ export function NavUser() {
   const balanceText = account
     ? account.balance === null
       ? "잔액 조회 불가"
-      : `잔액 ${formatNumber(account.balance)}원`
+      : `잔액 ${formatNumber(Math.floor(account.balance))}원`
     : null
   const subtitle = account
     ? [loginId, balanceText].filter(Boolean).join(" · ")
@@ -126,7 +126,7 @@ export function NavUser() {
                       <span className="text-right tabular-nums">
                         {account.balance === null
                           ? "-"
-                          : formatNumber(account.balance)}
+                          : formatNumber(Math.floor(account.balance))}
                       </span>
                     </div>
                   </div>

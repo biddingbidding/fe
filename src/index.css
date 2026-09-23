@@ -166,3 +166,11 @@
   pointer-events: none;
   z-index: 1;
 }
+/*
+ * AG Grid — 아래 키워드 표에 보이는 그룹 행. 체크박스로 고른 행은 그리드가 진한 선택색을 덮으므로
+ * 이쪽은 옅은 배경으로만 표시해 둘이 섞이지 않게 한다. 상태 배경보다 뒤에 두어야 덮어쓴다.
+ */
+.ag-row.queue-row-active {
+  background-color: color-mix(in oklab, var(--primary) 14%, var(--background));
+  font-weight: 500;
+}
