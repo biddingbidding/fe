@@ -145,6 +145,22 @@ export function useBulkUpdateKeywordSettings(adGroupId: string | null) {
   })
 }
 
+/** 여러 그룹의 키워드에 입찰 설정 일괄 적용. 성공하면 키워드 표 캐시를 전부 무효화해 다시 읽게 한다 */
+export function useApplyKeywordSettingsToGroups() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      adGroupIds,
+      patch,
+    }: {
+      adGroupIds: string[]
+      patch: Partial<BidSettingValues>
+    }) => api.applyKeywordSettingsToGroups(adGroupIds, patch),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["adGroupKeywords"] }),
+  })
+}
+
 /**
  * 광고 그룹 하나의 설정(기기·우선순위·순위확인지역)을 낙관적으로 수정한다. 보낸 필드만 바뀐다. 실패하면 되돌린다.
  * 같은 그룹이 캠페인/그룹 목록과 자동입찰 대기열 두 캐시에 있으므로 둘 다 반영하고,

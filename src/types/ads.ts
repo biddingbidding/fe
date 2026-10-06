@@ -136,6 +136,22 @@ export interface AdGroupSettingApplyResult {
   updated: number
 }
 
+/** 여러 그룹의 키워드에 입찰 설정 일괄 적용 — PUT /api/adgroups/keyword-settings 응답. 서버 스키마: BidSettingApplyGroupsResult */
+export interface BidSettingApplyGroupsResult {
+  items: {
+    adGroupId: string
+    ok: boolean
+    /** ok=false 일 때 사유 */
+    error: string | null
+    /** 값을 적용한 키워드 수 */
+    keywords: number
+  }[]
+  /** ok=true 인 그룹 수 */
+  applied: number
+  /** 적용한 키워드 수 합계 */
+  keywords: number
+}
+
 /** 광고 그룹 설정 — PATCH /api/adgroups/{id}/settings 응답. 서버 스키마: AdGroupSettingRead */
 export interface AdGroupSetting {
   adGroupId: string

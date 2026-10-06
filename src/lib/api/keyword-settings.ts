@@ -4,7 +4,11 @@
  * 설정 조회 API 는 따로 없다. getAdGroupKeywords 응답의 bidSetting 에 병합되어 오므로
  * 저장 후에는 키워드 쿼리를 무효화하면 된다.
  */
-import type { BidSetting, BidSettingValues } from "@/types/ads"
+import type {
+  BidSetting,
+  BidSettingApplyGroupsResult,
+  BidSettingValues,
+} from "@/types/ads"
 
 import { request } from "./client"
 
@@ -33,6 +37,24 @@ export const bulkUpsertKeywordSettings = (
     "PUT",
     `/api/adgroups/${encodeURIComponent(adGroupId)}/keywords/settings`,
     { items }
+  )
+
+/**
+ * 여러 그룹의 키워드 전부에 보낸 값만 덮어쓴다 (보내지 않은 값은 키워드마다 그대로).
+ * 범위는 그룹마다 키워드 표와 같다 — 입찰을 시작한 적 있는 그룹은 대상 키워드만, 시작 전이면 전체 키워드.
+ * 그룹별 성공/실패를 돌려주며, 한 그룹이 실패해도 나머지는 적용된다.
+ */
+export const applyKeywordSettingsToGroups = (
+  adGroupIds: string[],
+  patch: Partial<BidSettingValues>
+) =>
+  request<BidSettingApplyGroupsResult>(
+    "PUT",
+    "/api/adgroups/keyword-settings",
+    {
+      adGroupIds,
+      ...patch,
+    }
   )
 
 /** 키워드 설정 초기화. 이후 해당 키워드의 bidSetting 은 null 이 된다. */

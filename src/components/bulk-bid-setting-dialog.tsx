@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useState, type FormEvent, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -35,6 +35,8 @@ interface BulkBidSettingDialogProps {
   isOpen: boolean
   /** 적용 대상 키워드 수 (제목·설명에 표시) */
   count: number
+  /** 설명 문구를 바꿀 때 (그룹 단위 적용 등). 없으면 "선택한 키워드 N개에 적용합니다" */
+  description?: ReactNode
   /**
    * 저장 요청. 사용자가 값을 입력한 필드만 담긴다 — 비워 둔 필드는 바꾸지 않는다는 뜻.
    * resolve 되면 다이얼로그가 닫히고, reject 되면 에러를 보여주며 열린 채로 남는다.
@@ -54,6 +56,7 @@ const EMPTY_DRAFT: Draft = { targetRank: "", maxBid: "", bidAdjust: "" }
 export function BulkBidSettingDialog({
   isOpen,
   count,
+  description,
   onSubmit,
   close,
   unmount,
@@ -124,8 +127,8 @@ export function BulkBidSettingDialog({
           <DialogHeader>
             <DialogTitle>입찰 설정 일괄 변경</DialogTitle>
             <DialogDescription>
-              선택한 키워드 {count}개에 적용합니다. 비워 둔 항목은 바꾸지
-              않습니다.
+              {description ?? <>선택한 키워드 {count}개에 적용합니다.</>} 비워
+              둔 항목은 바꾸지 않습니다.
             </DialogDescription>
           </DialogHeader>
 

@@ -6,6 +6,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Square,
   X,
 } from "lucide-react"
@@ -15,6 +16,7 @@ import { toast } from "sonner"
 
 import { AutobidQueueGrid } from "@/components/autobid-queue-grid"
 import { BiddingKeywordGrid } from "@/components/bidding-keyword-grid"
+import { BulkBidSettingDialog } from "@/components/bulk-bid-setting-dialog"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { RankRegionDialog } from "@/components/rank-region-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -36,7 +38,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useAccount } from "@/hooks/use-account"
-import { useRankRegions, useUpdateAdGroupSetting } from "@/hooks/use-ad-groups"
+import {
+  useApplyKeywordSettingsToGroups,
+  useRankRegions,
+  useUpdateAdGroupSetting,
+} from "@/hooks/use-ad-groups"
 import {
   useAutobidQueue,
   useAutobidStatus,
@@ -107,6 +113,7 @@ export function BiddingPage() {
   const startAutobid = useStartAutobid(customerId)
   const stopAutobid = useStopAutobid(customerId)
   const removeFromQueue = useRemoveFromAutobidQueue(customerId)
+  const applySettings = useApplyKeywordSettingsToGroups()
   const busy =
     startAutobid.isPending || stopAutobid.isPending || removeFromQueue.isPending
   const items = queue.data ?? []
@@ -292,6 +299,74 @@ export function BiddingPage() {
   const removeTargets =
     checked.length > 0 ? checked : activeItem ? [activeItem] : []
 
+  /** 그룹 이름을 몇 개까지만 나열하고 나머지는 "외 N개" */
+  function listNames(groups: AutobidQueueItem[]) {
+    const names = groups.slice(0, MAX_LISTED_ERRORS).map((g) => g.name)
+    const rest = groups.length - names.length
+    return names.join(", ") + (rest > 0 ? ` 외 ${rest}개` : "")
+  }
+
+  /**
+   * 그룹 단위 일괄 설정 — 체크한 그룹들의 키워드 전부에 다이얼로그에서 입력한 값만 덮어쓴다.
+   * 대기열 빼기와 달리 보고 있는 그룹으로 대신하지 않는다 — 수백 키워드가 한 번에 바뀌므로 명시적으로 체크한 그룹만.
+   * 범위는 아래 키워드 표와 같다: 입찰을 시작한 그룹은 대상 키워드만, 시작 전 그룹은 네이버의 전체 키워드.
+   * 시작 전 그룹의 키워드 수는 서버가 네이버를 읽어야 알 수 있어 미리 보여주지 않는다.
+   */
+  function handleBulkSettings(targets: AutobidQueueItem[]) {
+    if (targets.length === 0) return
+    const known = targets.reduce((n, g) => n + g.targetKeywords, 0)
+    const nameById = new Map(items.map((g) => [g.id, g.name]))
+    overlay.open(({ isOpen, close, unmount }) => (
+      <BulkBidSettingDialog
+        isOpen={isOpen}
+        close={close}
+        unmount={unmount}
+        count={known}
+        description={
+          <>
+            {targets.length === 1 ? (
+              <>
+                <b>{targets[0].name}</b> 그룹의 키워드에 적용합니다.
+              </>
+            ) : (
+              <>
+                체크한 <b>{targets.length}개</b> 그룹({listNames(targets)})의
+                키워드에 적용합니다.
+              </>
+            )}{" "}
+            입찰을 시작한 그룹은 대상 키워드
+            {known > 0 && <b> {formatNumber(known)}개</b>}, 시작 전 그룹은
+            네이버의 전체 키워드가 대상입니다.
+          </>
+        }
+        onSubmit={async (patch) => {
+          const result = await applySettings.mutateAsync({
+            adGroupIds: targets.map((g) => g.id),
+            patch,
+          })
+          const failed = result.items.filter((it) => !it.ok)
+          const failedNames = failed
+            .slice(0, MAX_LISTED_ERRORS)
+            .map((it) => nameById.get(it.adGroupId) ?? it.adGroupId)
+            .join(", ")
+          if (result.applied === 0) {
+            throw new Error(
+              `설정을 저장하지 못했습니다. ${failedNames}: ${failed[0]?.error ?? ""}`
+            )
+          }
+          toast.success(
+            `그룹 ${result.applied}개 · 키워드 ${formatNumber(result.keywords)}개의 설정을 저장했습니다.`
+          )
+          if (failed.length > 0) {
+            toast.error(
+              `${failedNames}${failed.length > MAX_LISTED_ERRORS ? ` 외 ${failed.length - MAX_LISTED_ERRORS}개` : ""} 그룹은 저장하지 못했습니다. ${failed[0].error ?? ""}`
+            )
+          }
+        }}
+      />
+    ))
+  }
+
   /** 기기 드롭다운 선택 — 바로 저장한다. 실패하면 캐시가 되돌아가고 토스트로 알린다 */
   function handleChangeDevice(item: AutobidQueueItem, device: Device) {
     if (item.device === device) return
@@ -467,6 +542,31 @@ export function BiddingPage() {
                     : activeItem
                       ? `보고 있는 ${activeItem.name} 그룹을 대기열에서 뺍니다. 왼쪽 체크박스로 여러 개를 한 번에 뺄 수도 있습니다`
                       : "대기열에서 뺄 그룹을 체크하세요"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleBulkSettings(checked)}
+                      disabled={applySettings.isPending || checked.length === 0}
+                    />
+                  }
+                >
+                  <SlidersHorizontal />
+                  일괄 설정
+                  {checked.length > 0 && (
+                    <Badge variant="secondary" className="tabular-nums">
+                      {checked.length}
+                    </Badge>
+                  )}
+                </TooltipTrigger>
+                <TooltipContent>
+                  {checked.length > 0
+                    ? `체크한 그룹 ${checked.length}개의 키워드에 희망순위·입찰가 한도·가감액을 한 번에 적용합니다`
+                    : "왼쪽 체크박스로 설정을 적용할 그룹을 고르세요"}
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
