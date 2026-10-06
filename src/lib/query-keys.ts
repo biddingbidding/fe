@@ -1,4 +1,4 @@
-import type { StatsPeriod } from "@/types/ads"
+import type { Device, StatsPeriod } from "@/types/ads"
 
 export const queryKeys = {
   me: ["me"] as const,
@@ -32,4 +32,7 @@ export const queryKeys = {
   /** 키워드 하나의 하루치(한국 날짜) 입찰 기록 */
   keywordBidLogs: (adGroupId: string, keywordId: string, date: string) =>
     ["keywordBidLogs", adGroupId, keywordId, date] as const,
+  /** 키워드 하나의 실시간 노출 순위 (네이버 검색 결과 파워링크), 기기별 */
+  keywordSerp: (adGroupId: string, keywordId: string, device: Device) =>
+    ["keywordSerp", adGroupId, keywordId, device] as const,
 }

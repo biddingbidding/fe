@@ -18,6 +18,7 @@ import {
 } from "ag-grid-react"
 import {
   ChartLine,
+  ListOrdered,
   ChevronDown,
   RefreshCw,
   Search,
@@ -62,7 +63,7 @@ import {
 import { deviceLabel } from "@/lib/device"
 import { formatDateTime, formatNumber } from "@/lib/format"
 import { openNaverSearch } from "@/lib/naver"
-import { openKeywordBidLogDialog } from "@/lib/overlays"
+import { openKeywordBidLogDialog, openKeywordSerpDialog } from "@/lib/overlays"
 import {
   STATS_PERIOD_OPTIONS,
   formatStatsPeriod,
@@ -240,6 +241,15 @@ function KeywordCell({
         className="truncate font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
       >
         {value}
+      </button>
+      <button
+        type="button"
+        onClick={() => openKeywordSerpDialog(keyword, device)}
+        title="실시간 순위 보기 (네이버 검색 결과의 파워링크)"
+        aria-label={`${keyword.keyword} 실시간 순위 보기`}
+        className="shrink-0 text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
+      >
+        <ListOrdered className="size-3.5" />
       </button>
       {withAutobid && (
         <button
