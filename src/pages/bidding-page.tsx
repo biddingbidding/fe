@@ -325,18 +325,14 @@ export function BiddingPage() {
         description={
           <>
             {targets.length === 1 ? (
-              <>
-                <b>{targets[0].name}</b> 그룹의 키워드에 적용합니다.
-              </>
+              <b>{targets[0].name}</b>
             ) : (
               <>
-                체크한 <b>{targets.length}개</b> 그룹({listNames(targets)})의
-                키워드에 적용합니다.
+                그룹 <b>{targets.length}개</b>({listNames(targets)})
               </>
-            )}{" "}
-            입찰을 시작한 그룹은 대상 키워드
-            {known > 0 && <b> {formatNumber(known)}개</b>}, 시작 전 그룹은
-            네이버의 전체 키워드가 대상입니다.
+            )}
+            의 키워드{known > 0 && <b> {formatNumber(known)}개</b>}에
+            적용합니다.
           </>
         }
         onSubmit={async (patch) => {
