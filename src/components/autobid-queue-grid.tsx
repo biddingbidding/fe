@@ -112,7 +112,22 @@ const formatLastSent = ({
 }: ValueFormatterParams<AutobidQueueItem, string | null>) =>
   value ? formatDateTime(value) : "-"
 
-/** 그룹명 셀 — 앞에 입찰 상태 점. 입찰 중이면 점이 퍼지는 효과로 돌고 있음을 보인다 */
+/**
+ * "지금 입찰이 진행 중" 으로 볼 최근 검토 창. 워커 주기 60초에 큐 갱신 60초가 겹치고, 요금제 한도가
+ * 모자라면 한 그룹의 키워드가 매 사이클 다 돌지는 않으므로 사이클 몇 번 분량으로 넉넉히 잡는다.
+ */
+const ACTIVE_WINDOW_MS = 3 * 60_000
+
+/** 켜진 뒤 한 번 돌았다(RUNNING)가 아니라, 최근 창 안에 실제로 검토가 있었나 */
+function isActivelyBidding(item: AutobidQueueItem) {
+  return (
+    item.bidState === "RUNNING" &&
+    !!item.lastRunAt &&
+    Date.now() - new Date(item.lastRunAt).getTime() < ACTIVE_WINDOW_MS
+  )
+}
+
+/** 그룹명 셀 — 앞에 입찰 상태 점. 최근 창 안에 검토가 있었던 그룹만 점이 퍼지는 효과로 돌고 있음을 보인다 */
 function GroupNameCell({
   data,
 }: CustomCellRendererProps<AutobidQueueItem, string>) {
@@ -121,7 +136,7 @@ function GroupNameCell({
   return (
     <div className="flex h-full min-w-0 items-center gap-2">
       <span className="relative flex size-2 shrink-0" aria-hidden>
-        {data.bidState === "RUNNING" && (
+        {isActivelyBidding(data) && (
           <span
             className={cn(
               "absolute inline-flex size-full animate-ping rounded-full opacity-60",
@@ -146,6 +161,11 @@ function GroupNameCell({
 function bidStateTooltip(item: AutobidQueueItem): string {
   const meta = BID_STATE_META[item.bidState] ?? BID_STATE_META.STOPPED
   const lines = [`${meta.label}: ${meta.description}`]
+  if (item.bidState === "RUNNING" && item.lastRunAt)
+    lines.push(
+      `최근 검토 ${formatDateTime(item.lastRunAt)}` +
+        (isActivelyBidding(item) ? "" : " — 지금은 차례를 기다리는 중")
+    )
   if (item.nextRunAt)
     lines.push(`다음 검토 가능 ${formatDateTime(item.nextRunAt)}`)
   return lines.join(" · ")
@@ -257,8 +277,8 @@ const BID_SPEED_HELP = (
   <>
     <span className="font-medium">한 번 검토에 얼마나 움직일지</span>
     <span>
-      빠르게(기본): 순위가 밀린 칸수만큼 가감액을 곱해 한 번에 올립니다. 희망 1위인데
-      5위면 가감액 100원 × 4칸 = 400원.
+      빠르게(기본): 순위가 밀린 칸수만큼 가감액을 곱해 한 번에 올립니다. 희망
+      1위인데 5위면 가감액 100원 × 4칸 = 400원.
     </span>
     <span>천천히: 순위와 상관없이 가감액 1회만. 위 상황에서 100원.</span>
     <span className="text-background/70">
@@ -268,14 +288,18 @@ const BID_SPEED_HELP = (
 )
 
 /** 입찰 속도 선택지 — 값은 "가감액 1회만 쓰는가"(서버의 singleStep) */
-const BID_SPEED_OPTIONS: { value: string; label: string; singleStep: boolean }[] =
-  [
-    { value: "fast", label: "빠르게", singleStep: false },
-    { value: "slow", label: "천천히", singleStep: true },
-  ]
+const BID_SPEED_OPTIONS: {
+  value: string
+  label: string
+  singleStep: boolean
+}[] = [
+  { value: "fast", label: "빠르게", singleStep: false },
+  { value: "slow", label: "천천히", singleStep: true },
+]
 
 const bidSpeedValue = (singleStep: boolean) => (singleStep ? "slow" : "fast")
-const bidSpeedLabel = (singleStep: boolean) => (singleStep ? "천천히" : "빠르게")
+const bidSpeedLabel = (singleStep: boolean) =>
+  singleStep ? "천천히" : "빠르게"
 
 /**
  * 입찰 속도 셀 — 빠르게(순위차 × 가감액, 기본) / 천천히(가감액 1회).
