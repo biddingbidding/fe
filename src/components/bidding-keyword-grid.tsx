@@ -470,10 +470,28 @@ const lastRankCol: ColDef<AdGroupKeyword> = {
     const max = data?.autobid?.lastMaxPosition
     return max != null && rank > max ? `${max}위 밖` : `${rank}위`
   },
-  tooltipValueGetter: ({ data }) =>
-    data?.autobid?.lastRank == null
-      ? "아직 순위를 계산하지 못했습니다 (검토 전이거나 네이버 예상가를 못 받음)"
-      : "마지막 검토 시점의 예상 순위입니다. 네이버 예상 입찰가로 추정한 값이라 실제 노출 순위와 다를 수 있습니다",
+  tooltipValueGetter: ({ data }) => (data ? rankTooltip(data) : undefined),
+}
+
+/** 현재 순위 툴팁 — 값이 있으면 뜻을, "-" 면 왜 못 구했는지를 마지막 검토 사유로 가른다 */
+function rankTooltip(k: AdGroupKeyword): string {
+  const a = k.autobid
+  if (!a?.lastRunAt)
+    return "아직 검토 전입니다. 차례가 오면 네이버 예상 입찰가로 순위를 계산합니다"
+  const when = `검토 ${formatDateTime(a.lastRunAt)} 기준`
+  if (a.lastRank != null)
+    return `${when} 예상 순위입니다. 네이버 예상 입찰가로 추정한 값이라 실제 노출 순위와 다를 수 있습니다`
+  const reason = a.lastReason ?? ""
+  if (reason.includes("예상가 조회 실패"))
+    return `${when} 네이버 예상가 조회가 실패해 순위를 계산하지 못했습니다. 다음 검토에서 다시 시도합니다. (${reason})`
+  if (reason.includes("예상가 없음"))
+    return `${when} 네이버가 이 키워드의 예상 입찰가를 주지 않아 순위를 계산할 수 없습니다. 검색량이 적거나 노출 이력이 없는 키워드에서 흔하며, 데이터가 생기면 자동으로 계산됩니다`
+  if (
+    reason.includes("키워드 조회 실패") ||
+    reason.includes("네이버에 키워드 없음")
+  )
+    return `${when} 네이버에서 키워드를 읽지 못해 순위를 계산하지 못했습니다. (${reason})`
+  return `${when} 순위를 계산하지 못했습니다. 서버의 순위 추정이 꺼져 있을 수 있습니다. (${reason})`
 }
 
 /**
