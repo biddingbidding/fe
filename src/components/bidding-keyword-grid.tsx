@@ -4,6 +4,7 @@ import type {
   ColDef,
   ColGroupDef,
   GetRowIdFunc,
+  RowClassRules,
   IErrorValidationParams,
   RowDataUpdatedEvent,
   RowSelectionOptions,
@@ -75,6 +76,7 @@ import { errorMessage } from "@/lib/toast"
 import type {
   AdGroup,
   AdGroupKeyword,
+  AutobidState,
   Device,
   BidSettingValues,
   KeywordStats,
@@ -382,6 +384,27 @@ const formatAutobidTime = ({
  * "지금 이 값으로 몇 위" 로 읽히게 한다. 자동입찰 대상만 보는 중일 때만 붙는다 (그 밖에는 값이 없다).
  * 순위 축 끝(PC 10 · 모바일 5)을 넘으면 그 밖이라는 뜻이라 "10위 밖" 으로 보인다.
  */
+/** 마지막 검토에서 입찰가를 실제로 바꿨나 — 엔진은 바뀐 키워드만 전송하고 그때만 lastSentAt 을 갱신한다 */
+function changedLastRun(a: AutobidState | null | undefined) {
+  return !!a?.lastSentAt && !!a.lastRunAt && a.lastSentAt >= a.lastRunAt
+}
+
+/** 입찰가가 한도(최고가)에 닿았나. 한도를 비운 키워드는 서버 기본값이 한도라 사유 문구로 본다 */
+function atMaxBid(k: AdGroupKeyword) {
+  const lastBid = k.autobid?.lastBid
+  if (lastBid == null) return false
+  const max = k.bidSetting?.maxBid
+  return max != null
+    ? lastBid >= max
+    : (k.autobid?.lastReason ?? "").includes("이미 한도")
+}
+
+/** 행 강조 (index.css) — 볼드: 마지막 검토에서 입찰가 변경 · 분홍: 입찰가 한도(최고가) */
+const rowClassRules: RowClassRules<AdGroupKeyword> = {
+  "kw-row-changed": ({ data }) => !!data && changedLastRun(data.autobid),
+  "kw-row-max-bid": ({ data }) => !!data && atMaxBid(data),
+}
+
 const lastRankCol: ColDef<AdGroupKeyword> = {
   colId: "lastRank",
   headerName: "현재 순위",
@@ -392,7 +415,8 @@ const lastRankCol: ColDef<AdGroupKeyword> = {
     const rank = data?.autobid?.lastRank
     if (rank == null) return "-"
     const max = data?.autobid?.lastMaxPosition
-    return max != null && rank > max ? `${max}위 밖` : `${rank}위`
+    const label = max != null && rank > max ? `${max}위 밖` : `${rank}위`
+    return data && atMaxBid(data) ? `${label} (최고가)` : label
   },
   tooltipValueGetter: ({ data }) =>
     data?.autobid?.lastRank == null
@@ -770,6 +794,7 @@ export function BiddingKeywordGrid({
           theme={gridTheme}
           rowData={keywords}
           getRowId={getRowId}
+          rowClassRules={rowClassRules}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           context={context}

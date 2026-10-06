@@ -174,3 +174,13 @@
   background-color: color-mix(in oklab, var(--primary) 14%, var(--background));
   font-weight: 500;
 }
+/*
+ * AG Grid — 키워드 표 (bidding-keyword-grid.tsx 의 rowClassRules).
+ * 볼드: 마지막 검토에서 입찰가를 바꿈 (유지는 보통 굵기). 분홍: 입찰가가 한도(최고가)에 닿음.
+ */
+.ag-row.kw-row-changed {
+  font-weight: 700;
+}
+.ag-row.kw-row-max-bid {
+  background-color: color-mix(in oklab, var(--destructive) 12%, var(--background));
+}
