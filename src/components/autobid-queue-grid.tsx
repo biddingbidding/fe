@@ -297,6 +297,28 @@ const BID_SPEED_HELP = (
   </>
 )
 
+/** 상태 헤더의 ? 설명 — 여섯 가지 상태의 뜻. 셀 자체 툴팁에는 그 그룹의 사유·검토 시각이 뜬다 */
+const BID_STATE_HELP = (
+  <>
+    <span className="font-medium">그룹의 자동입찰 상태</span>
+    <span>입찰 중: 최근 몇 분 안에 키워드 검토가 돌았습니다.</span>
+    <span>
+      차례 대기: 켜져 있지만 요금제 한도(분당 키워드 수) 때문에 아직 차례가 오지
+      않았습니다.
+    </span>
+    <span>시작 대기: 켠 뒤 첫 검토 전 (보통 1분 안팎).</span>
+    <span>
+      광고 꺼짐: 네이버에서 광고가 노출되지 않는 그룹 (그룹·캠페인 OFF, 예산
+      초과 등). 검토는 계속하지만 노출에 영향이 없습니다.
+    </span>
+    <span>키워드 없음: 대상 키워드가 없어 검토할 것이 없습니다.</span>
+    <span>중지: 입찰이 꺼져 있습니다.</span>
+    <span className="text-background/70">
+      셀에 마우스를 올리면 그 그룹의 사유와 최근·다음 검토 시각이 보입니다.
+    </span>
+  </>
+)
+
 /** 입찰 속도 선택지 — 값은 "가감액 1회만 쓰는가"(서버의 singleStep) */
 const BID_SPEED_OPTIONS: {
   value: string
@@ -361,7 +383,9 @@ const buildColumnDefs = (
   {
     colId: "bidState",
     headerName: "상태",
-    width: 110,
+    width: 120,
+    headerComponent: HelpHeader,
+    headerComponentParams: { help: BID_STATE_HELP },
     cellRenderer: BidStateCell,
     // 정렬·검색은 화면 문구("입찰 중", "광고 꺼짐" …) 기준
     valueGetter: ({ data }) => (data ? bidStateMeta(data).label : ""),
