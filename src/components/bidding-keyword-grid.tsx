@@ -413,19 +413,46 @@ function keywordStatus(k: AdGroupKeyword): string {
   return "유지"
 }
 
-/** 보조 상태(최고가·예상가 없음·검토 전·유지)는 흐리게, 변경·전송 실패만 또렷하게 */
-const MUTED_STATUSES = new Set(["유지", "검토 전", "예상가 없음"])
+/** 상태별 점 색 (대기열 표의 상태 열과 같은 모양). 변경 파랑 · 최고가 주황 · 전송 실패 빨강 · 나머지 회색 */
+const STATUS_DOT_CLASS: Record<string, string> = {
+  변경: "bg-primary",
+  최고가: "bg-amber-500",
+  "전송 실패": "bg-destructive",
+}
+
+/** "상태" 셀 — 점 + 문구 */
+function KeywordStatusCell({
+  value,
+}: CustomCellRendererProps<AdGroupKeyword, string>) {
+  if (!value) return null
+  return (
+    <span className="inline-flex h-full items-center gap-1.5">
+      <span
+        aria-hidden
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          STATUS_DOT_CLASS[value] ?? "bg-muted-foreground/40"
+        )}
+      />
+      <span
+        className={cn(
+          "font-medium",
+          value === "전송 실패" && "text-destructive",
+          !STATUS_DOT_CLASS[value] && "text-muted-foreground"
+        )}
+      >
+        {value}
+      </span>
+    </span>
+  )
+}
 
 const keywordStatusCol: ColDef<AdGroupKeyword> = {
   colId: "status",
   headerName: "상태",
-  ...fit(100),
-  cellClass: "text-center",
+  ...fit(110),
   valueGetter: ({ data }) => (data ? keywordStatus(data) : ""),
-  cellClassRules: {
-    "text-muted-foreground": ({ value }) => MUTED_STATUSES.has(value),
-    "text-destructive": ({ value }) => value === "전송 실패",
-  },
+  cellRenderer: KeywordStatusCell,
   // 사유 전문은 툴팁으로
   tooltipValueGetter: ({ data }) => data?.autobid?.lastReason ?? undefined,
 }
