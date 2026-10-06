@@ -229,7 +229,7 @@ export function BiddingPage() {
         description={
           <>
             입찰 중인 그룹 <b>{runningItems.length}개</b>의 자동입찰을
-            중지합니다. 대기열과 키워드 설정은 그대로 남습니다.
+            중지합니다.
           </>
         }
         confirmLabel="모두 중지"
@@ -510,7 +510,7 @@ export function BiddingPage() {
                   )}
                 </TooltipTrigger>
                 <TooltipContent>
-                  입찰 중인 그룹을 모두 중지합니다 (대기열에는 남습니다)
+                  입찰 중인 그룹을 모두 중지합니다
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
