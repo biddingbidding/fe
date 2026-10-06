@@ -4,7 +4,6 @@ import type {
   ColDef,
   ColGroupDef,
   GetRowIdFunc,
-  RowClassRules,
   IErrorValidationParams,
   RowDataUpdatedEvent,
   RowSelectionOptions,
@@ -399,10 +398,36 @@ function atMaxBid(k: AdGroupKeyword) {
     : (k.autobid?.lastReason ?? "").includes("이미 한도")
 }
 
-/** 행 강조 (index.css) — 볼드: 마지막 검토에서 입찰가 변경 · 분홍: 입찰가 한도(최고가) */
-const rowClassRules: RowClassRules<AdGroupKeyword> = {
-  "kw-row-changed": ({ data }) => !!data && changedLastRun(data.autobid),
-  "kw-row-max-bid": ({ data }) => !!data && atMaxBid(data),
+/**
+ * 키워드의 자동입찰 상태 한 단어 — 마지막 검토 결과를 글자로 (색·굵기 대신). 위에서부터 먼저 맞는 것:
+ * 전송 실패 > 변경(이번 검토에서 입찰가를 바꿔 보냄) > 최고가(한도에 닿아 못 올림) > 예상가 없음 > 유지 > 검토 전
+ */
+function keywordStatus(k: AdGroupKeyword): string {
+  const a = k.autobid
+  if (!a?.lastRunAt) return "검토 전"
+  const reason = a.lastReason ?? ""
+  if (reason.includes("전송 실패")) return "전송 실패"
+  if (changedLastRun(a)) return "변경"
+  if (atMaxBid(k)) return "최고가"
+  if (reason.includes("예상가 없음")) return "예상가 없음"
+  return "유지"
+}
+
+/** 보조 상태(최고가·예상가 없음·검토 전·유지)는 흐리게, 변경·전송 실패만 또렷하게 */
+const MUTED_STATUSES = new Set(["유지", "검토 전", "예상가 없음"])
+
+const keywordStatusCol: ColDef<AdGroupKeyword> = {
+  colId: "status",
+  headerName: "상태",
+  ...fit(100),
+  cellClass: "text-center",
+  valueGetter: ({ data }) => (data ? keywordStatus(data) : ""),
+  cellClassRules: {
+    "text-muted-foreground": ({ value }) => MUTED_STATUSES.has(value),
+    "text-destructive": ({ value }) => value === "전송 실패",
+  },
+  // 사유 전문은 툴팁으로
+  tooltipValueGetter: ({ data }) => data?.autobid?.lastReason ?? undefined,
 }
 
 const lastRankCol: ColDef<AdGroupKeyword> = {
@@ -415,8 +440,7 @@ const lastRankCol: ColDef<AdGroupKeyword> = {
     const rank = data?.autobid?.lastRank
     if (rank == null) return "-"
     const max = data?.autobid?.lastMaxPosition
-    const label = max != null && rank > max ? `${max}위 밖` : `${rank}위`
-    return data && atMaxBid(data) ? `${label} (최고가)` : label
+    return max != null && rank > max ? `${max}위 밖` : `${rank}위`
   },
   tooltipValueGetter: ({ data }) =>
     data?.autobid?.lastRank == null
@@ -483,7 +507,7 @@ const buildColumnDefs = (
         ? "그룹 기본 입찰가를 따르는 키워드입니다. 자동입찰이 입찰가를 바꾸면 키워드 자체 입찰가로 바뀝니다"
         : "지금 네이버에 설정된 키워드 입찰가입니다",
   },
-  ...(withAutobid ? [lastRankCol] : []),
+  ...(withAutobid ? [keywordStatusCol, lastRankCol] : []),
   {
     colId: "targetRank",
     headerName: "희망순위",
@@ -794,7 +818,6 @@ export function BiddingKeywordGrid({
           theme={gridTheme}
           rowData={keywords}
           getRowId={getRowId}
-          rowClassRules={rowClassRules}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           context={context}
