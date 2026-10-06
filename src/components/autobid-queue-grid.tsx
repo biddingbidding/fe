@@ -29,7 +29,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { gridTheme, refreshRowNumbers, rowNumberColDef } from "@/lib/ag-grid"
-import { BID_STATE_META } from "@/lib/bid-state"
+import { adStatusReasonLabel } from "@/lib/ad-status"
+import { BID_STATE_META, IDLE_META } from "@/lib/bid-state"
 import { DEVICE_OPTIONS, deviceLabel } from "@/lib/device"
 import { formatDateTime, formatNumber } from "@/lib/format"
 import { rankRegionLabel } from "@/lib/rank-region"
@@ -127,16 +128,29 @@ function isActivelyBidding(item: AutobidQueueItem) {
   )
 }
 
-/** 그룹명 셀 — 앞에 입찰 상태 점. 최근 창 안에 검토가 있었던 그룹만 점이 퍼지는 효과로 돌고 있음을 보인다 */
-function GroupNameCell({
-  data,
-}: CustomCellRendererProps<AutobidQueueItem, string>) {
+/** 화면에 보일 상태 — 서버 상태에 "입찰 중 / 차례 대기" 구분을 얹는다 */
+function bidStateMeta(item: AutobidQueueItem) {
+  if (item.bidState === "RUNNING" && !isActivelyBidding(item)) return IDLE_META
+  return BID_STATE_META[item.bidState] ?? BID_STATE_META.STOPPED
+}
+
+/** 상태 문구 색 — 주의 상태(광고 꺼짐·키워드 없음)는 빨강, 중지는 흐리게 */
+const STATE_TEXT_CLASS: Partial<Record<AutobidQueueItem["bidState"], string>> =
+  {
+    AD_OFF: "text-destructive",
+    NO_KEYWORDS: "text-destructive",
+    STOPPED: "text-muted-foreground",
+  }
+
+/** "상태" 셀 — 점 + 문구. 입찰 중이면 점이 퍼지는 효과로 돌고 있음을 보인다 */
+function BidStateCell({ data }: CustomCellRendererProps<AutobidQueueItem>) {
   if (!data) return null
-  const meta = BID_STATE_META[data.bidState] ?? BID_STATE_META.STOPPED
+  const meta = bidStateMeta(data)
+  const active = isActivelyBidding(data)
   return (
     <div className="flex h-full min-w-0 items-center gap-2">
       <span className="relative flex size-2 shrink-0" aria-hidden>
-        {isActivelyBidding(data) && (
+        {active && (
           <span
             className={cn(
               "absolute inline-flex size-full animate-ping rounded-full opacity-60",
@@ -151,36 +165,32 @@ function GroupNameCell({
           )}
         />
       </span>
-      <span className="sr-only">{meta.label}</span>
-      <span className="truncate">{data.name}</span>
+      <span className={cn("truncate", STATE_TEXT_CLASS[data.bidState])}>
+        {meta.label}
+      </span>
     </div>
   )
 }
 
-/** 그룹명 툴팁 — 상태 설명과 다음 검토 가능 시각 */
+/** 상태 툴팁 — 설명, 광고 꺼짐 사유, 최근 검토·다음 검토 가능 시각 */
 function bidStateTooltip(item: AutobidQueueItem): string {
-  const meta = BID_STATE_META[item.bidState] ?? BID_STATE_META.STOPPED
+  const meta = bidStateMeta(item)
   const lines = [`${meta.label}: ${meta.description}`]
-  if (item.bidState === "RUNNING" && item.lastRunAt)
-    lines.push(
-      `최근 검토 ${formatDateTime(item.lastRunAt)}` +
-        (isActivelyBidding(item) ? "" : " — 지금은 차례를 기다리는 중")
-    )
+  if (item.bidState === "AD_OFF") {
+    const reason = adStatusReasonLabel(item.adStatusReason)
+    if (reason) lines.push(`네이버 사유: ${reason}`)
+  }
+  if (item.lastRunAt) lines.push(`최근 검토 ${formatDateTime(item.lastRunAt)}`)
   if (item.nextRunAt)
     lines.push(`다음 검토 가능 ${formatDateTime(item.nextRunAt)}`)
   return lines.join(" · ")
 }
 
-/**
- * 행 강조 — 입찰 상태별 왼쪽 색 막대 + 옅은 배경 (index.css). 중지는 강조하지 않는다.
- * 아래 키워드 표에 보이는 그룹은 queue-row-active 로 테두리를 둘러 체크된 행(배경색)과 구분한다.
- */
+/** 행 강조 — 아래 키워드 표에 보이는 그룹은 queue-row-active 로 테두리를 둘러 체크된 행(배경색)과 구분한다 */
 const buildGetRowClass =
   (selectedId: string | null) =>
   ({ data }: RowClassParams<AutobidQueueItem>) => {
     const classes = ["cursor-pointer"]
-    const stateClass = data ? BID_STATE_META[data.bidState]?.rowClass : null
-    if (stateClass) classes.push(stateClass)
     if (data && data.id === selectedId) classes.push("queue-row-active")
     return classes.join(" ")
   }
@@ -347,17 +357,16 @@ const buildColumnDefs = (
 ): ColDef<AutobidQueueItem>[] => [
   rowNumberColDef<AutobidQueueItem>(),
   { field: "campaignName", headerName: "캠페인명", flex: 1, minWidth: 160 },
+  { field: "name", headerName: "그룹명", flex: 1, minWidth: 160 },
   {
-    field: "name",
-    headerName: "그룹명",
-    flex: 1,
-    minWidth: 160,
-    cellRenderer: GroupNameCell,
+    colId: "bidState",
+    headerName: "상태",
+    width: 110,
+    cellRenderer: BidStateCell,
+    // 정렬·검색은 화면 문구("입찰 중", "광고 꺼짐" …) 기준
+    valueGetter: ({ data }) => (data ? bidStateMeta(data).label : ""),
     tooltipValueGetter: ({ data }) =>
       data ? bidStateTooltip(data) : undefined,
-    // "입찰 중" 같은 상태 문구로도 검색되게
-    getQuickFilterText: ({ data }) =>
-      data ? `${data.name} ${BID_STATE_META[data.bidState]?.label ?? ""}` : "",
   },
   {
     field: "targetKeywords",
