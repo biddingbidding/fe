@@ -384,6 +384,8 @@ const buildColumnDefs = (
     colId: "bidState",
     headerName: "상태",
     width: 120,
+    // 갱신으로 상태 문구가 바뀌면 셀 배경을 잠깐 깜빡여 변화를 알린다 (행은 getRowId 로 제자리 갱신)
+    enableCellChangeFlash: true,
     headerComponent: HelpHeader,
     headerComponentParams: { help: BID_STATE_HELP },
     cellRenderer: BidStateCell,

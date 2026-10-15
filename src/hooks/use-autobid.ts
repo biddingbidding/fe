@@ -3,7 +3,8 @@
  *
  * 큐(대기열) 소속과 입찰 상태는 별개다 (자세한 흐름은 lib/api/autobid.ts).
  * 어느 쪽을 바꿔도 그룹 목록(queued·autobidEnabled)·큐·현황 세 캐시를 함께 무효화한다.
- * 워커 주기가 60초라 큐·현황은 60초마다 재조회한다 — 더 자주 불러도 새 데이터가 없다.
+ * 워커 주기는 60초지만 큐·현황은 15초마다 재조회한다 — 사이클이 끝난 뒤 상태 열이 늦어도 15초 안에 바뀌게.
+ * 대기열 API 의 네이버 조회는 서버 캐시(60초)가 막아 주므로 늘어나는 건 가벼운 DB 읽기뿐이다.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
@@ -11,10 +12,10 @@ import * as api from "@/lib/api"
 import { queryKeys } from "@/lib/query-keys"
 import type { AdGroup, AutobidQueueItem } from "@/types/ads"
 
-/** 워커 주기(60초)에 맞춘 재조회 간격 */
-const AUTOBID_REFETCH_MS = 60_000
+/** 큐·현황 재조회 간격. 워커(60초)가 바꾼 상태를 늦어도 이만큼 안에 따라간다 */
+const AUTOBID_REFETCH_MS = 15_000
 
-/** 큐 목록. 입찰 중인 그룹이 하나라도 있으면 60초마다 진행 상황(검토 수·마지막 검토 시각)을 갱신한다. */
+/** 큐 목록. 입찰 중인 그룹이 하나라도 있으면 15초마다 진행 상황(상태·검토 수·마지막 검토 시각)을 갱신한다. */
 export function useAutobidQueue(customerId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.autobidQueue(customerId ?? ""),
@@ -27,7 +28,7 @@ export function useAutobidQueue(customerId: string | undefined) {
   })
 }
 
-/** 계정 단위 현황(요금제·주기·큐/입찰 중 그룹·대상 키워드·마지막 검토). 배지용이라 60초마다 갱신한다. */
+/** 계정 단위 현황(요금제·주기·큐/입찰 중 그룹·대상 키워드·마지막 검토). 배지용, 15초마다 갱신한다. */
 export function useAutobidStatus(customerId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.autobidStatus(customerId ?? ""),

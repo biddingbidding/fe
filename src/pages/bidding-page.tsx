@@ -98,7 +98,7 @@ function StatusSummary({ status }: { status: AutobidStatus | undefined }) {
 /**
  * 자동 입찰 — 위아래 두 표. 위는 자동입찰 대기열(큐)이고, 행을 클릭하면 아래에 그 그룹의 키워드가 나온다.
  * 대기열에 넣는 것(캠페인/그룹 페이지)과 입찰 시작은 별개 — 여기의 [입찰 시작]/[입찰 중지] 버튼이 실제 입찰을 켜고 끈다.
- * 큐는 입찰 중인 그룹이 있으면 워커 주기(60초)에 맞춰 자동으로 갱신된다.
+ * 큐는 입찰 중인 그룹이 있으면 15초마다 자동으로 갱신된다 (워커 주기 60초보다 짧게 두어 상태 변화를 바로 따라간다).
  * 선택한 그룹은 URL 쿼리(?group=)에 두어 새로고침해도 유지된다.
  */
 export function BiddingPage() {
@@ -582,7 +582,7 @@ export function BiddingPage() {
                   />
                 </TooltipTrigger>
                 <TooltipContent>
-                  대기열을 다시 불러옵니다 (입찰 중이면 60초마다 자동 갱신)
+                  대기열을 다시 불러옵니다 (입찰 중이면 15초마다 자동 갱신)
                 </TooltipContent>
               </Tooltip>
               <InputGroup className="w-56">

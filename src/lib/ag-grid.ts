@@ -5,6 +5,7 @@ import {
   CellStyleModule,
   ClientSideRowModelModule,
   ExternalFilterModule,
+  HighlightChangesModule,
   ModuleRegistry,
   NumberEditorModule,
   QuickFilterModule,
@@ -39,6 +40,8 @@ ModuleRegistry.registerModules([
   TooltipModule,
   RowStyleModule,
   CellStyleModule,
+  // 자동 입찰 그룹 그리드의 상태 열이 바뀌면 셀을 잠깐 깜빡인다 (enableCellChangeFlash)
+  HighlightChangesModule,
   ...(import.meta.env.DEV ? [ValidationModule] : []),
 ])
 
@@ -64,6 +67,9 @@ export const gridTheme: Theme = themeQuartz.withParams({
   selectedRowBackgroundColor:
     "color-mix(in oklab, var(--primary) 22%, var(--background))",
   focusShadow: "0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent)",
+  // 값이 바뀐 셀의 깜빡임 색 (enableCellChangeFlash) — 선택 행과 같은 primary 톤
+  valueChangeValueHighlightBackgroundColor:
+    "color-mix(in oklab, var(--primary) 30%, var(--background))",
   browserColorScheme: "inherit",
 
   // 체크박스 (shadcn Checkbox 와 동일한 톤)
