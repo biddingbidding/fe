@@ -72,12 +72,17 @@ export function CollectionFilter({
       <Chip
         active={selected === null && !queuedSelected}
         onClick={() => onSelect(null)}
+        className={selected === null && !queuedSelected ? ACTIVE_RING : undefined}
       >
         전체
         <Count n={total} />
       </Chip>
       {/* 자동입찰 대기열에 넣어 둔 그룹만 — 모음과 같은 줄에 두되 배타로 고른다 */}
-      <Chip active={queuedSelected} onClick={onSelectQueued}>
+      <Chip
+        active={queuedSelected}
+        onClick={onSelectQueued}
+        className={queuedSelected ? ACTIVE_RING : undefined}
+      >
         <Gavel className="size-3.5 opacity-70" />
         대기열
         <Count n={queuedCount} />
@@ -85,14 +90,17 @@ export function CollectionFilter({
       {collections.map((c) => {
         const active = selected === c.id
         return (
-          <div key={c.id} className="flex items-center">
+          <div
+            key={c.id}
+            className={cn("flex items-center", active && ACTIVE_RING)}
+          >
             <Chip
               active={active}
               onClick={() => onSelect(active ? null : c.id)}
               className={active ? "rounded-r-none pr-1.5" : undefined}
             >
               <CollectionDot color={c.color} />
-              <span className="max-w-40 truncate">{c.name}</span>
+              <span>{c.name}</span>
               <Count n={c.adGroupIds.length} />
             </Chip>
             {active && (
@@ -101,7 +109,7 @@ export function CollectionFilter({
                   render={
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant="default"
                       className="rounded-l-none border-l border-l-background/40 px-1.5"
                       aria-label={`${c.name} 모음 메뉴`}
                     />
@@ -141,6 +149,10 @@ export function CollectionFilter({
   )
 }
 
+/** 켜진 칩(모음은 칩+메뉴 묶음) 둘레의 옅은 테두리 — 채운 색만으로는 꺼진 칩과 차이가 약해서 */
+const ACTIVE_RING =
+  "rounded-[min(var(--radius-md),12px)] ring-2 ring-primary/35 ring-offset-1 ring-offset-background"
+
 function Chip({
   active,
   onClick,
@@ -155,11 +167,15 @@ function Chip({
   return (
     <Button
       size="sm"
-      variant={active ? "secondary" : "outline"}
+      variant={active ? "default" : "outline"}
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={cn("gap-1.5", className)}
+      className={cn(
+        "gap-1.5",
+        active ? "font-semibold" : "text-muted-foreground",
+        className
+      )}
     >
       {children}
     </Button>
@@ -168,6 +184,6 @@ function Chip({
 
 function Count({ n }: { n: number }) {
   return (
-    <span className="tabular-nums text-muted-foreground text-xs">{n}</span>
+    <span className="tabular-nums text-xs opacity-60">{n}</span>
   )
 }

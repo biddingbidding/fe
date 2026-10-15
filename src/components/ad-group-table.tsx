@@ -14,6 +14,7 @@ import {
 import {
   ChevronDown,
   FolderPlus,
+  ListMinus,
   ListPlus,
   Plus,
   Search,
@@ -51,6 +52,7 @@ import { useAccount } from "@/hooks/use-account"
 import { useAdGroups } from "@/hooks/use-ad-groups"
 import {
   useAddToAutobidQueue,
+  useRemoveFromAutobidQueue,
   useSetQueueMembership,
 } from "@/hooks/use-autobid"
 import {
@@ -174,7 +176,7 @@ function CollectionsCell({
             <Badge
               key={c.id}
               variant="secondary"
-              className="max-w-28 truncate text-white"
+              className="text-white"
               style={{ backgroundColor: collectionHex(c.color) }}
             >
               {c.name}
@@ -195,6 +197,7 @@ function CollectionsCell({
                 <DropdownMenuCheckboxItem
                   key={c.id}
                   checked={member}
+                  className={member ? "bg-primary/10 font-medium" : undefined}
                   closeOnClick={false}
                   onCheckedChange={(checked) => onToggle(data, c, checked)}
                 >
@@ -328,6 +331,8 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
   const { mutate: setQueueMembership } = useSetQueueMembership(customerId)
   const { mutate: addGroupsToQueue, isPending: addingToQueue } =
     useAddToAutobidQueue(customerId)
+  const { mutate: removeGroupsFromQueue, isPending: removingFromQueue } =
+    useRemoveFromAutobidQueue(customerId)
   const navigate = useNavigate()
   const { data: collections = [] } = useCollections(customerId)
   const { mutateAsync: createCollection } = useCreateCollection(customerId)
@@ -615,6 +620,32 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
     )
   }, [addGroupsToQueue, navigate])
 
+  /** 체크한 그룹들을 대기열에서 한 번에 뺀다 (입찰 중이면 같이 멈춘다). 대기열에 없는 그룹은 빼고 보낸다. */
+  const handleBulkRemoveFromQueue = useCallback(() => {
+    const api = gridRef.current?.api
+    const selected = api?.getSelectedRows() ?? []
+    if (selected.length === 0) return
+    const targets = selected.filter((g) => g.queued)
+    if (targets.length === 0) {
+      toast.info(`선택한 그룹 ${selected.length}개는 대기열에 없습니다.`)
+      api?.deselectAll()
+      return
+    }
+    removeGroupsFromQueue(
+      targets.map((g) => g.id),
+      {
+        onSuccess: (count) => {
+          toast.success(`그룹 ${count}개를 대기열에서 뺐습니다.`)
+          api?.deselectAll()
+        },
+        onError: (err) =>
+          toast.error(
+            errorMessage(err, "선택한 그룹을 대기열에서 빼지 못했습니다.")
+          ),
+      }
+    )
+  }, [removeGroupsFromQueue])
+
   /** 체크한 그룹들을 담은 새 모음 만들기 */
   const handleBulkCreateCollection = useCallback(() => {
     const api = gridRef.current?.api
@@ -668,6 +699,19 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
           >
             <ListPlus />
             {addingToQueue ? "넣는 중..." : "대기열에 넣기"}
+            {selectedCount > 0 && (
+              <Badge variant="secondary" className="tabular-nums">
+                {selectedCount}
+              </Badge>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleBulkRemoveFromQueue}
+            disabled={selectedCount === 0 || removingFromQueue}
+          >
+            <ListMinus />
+            {removingFromQueue ? "빼는 중..." : "대기열에서 빼기"}
             {selectedCount > 0 && (
               <Badge variant="secondary" className="tabular-nums">
                 {selectedCount}
