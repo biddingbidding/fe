@@ -452,6 +452,8 @@ const keywordStatusCol: ColDef<AdGroupKeyword> = {
   colId: "status",
   headerName: "상태",
   ...fit(110),
+  // 갱신으로 상태 문구가 바뀌면(유지 → 변경 등) 셀을 잠깐 깜빡인다 (대기열 표의 상태 열과 같은 효과)
+  enableCellChangeFlash: true,
   valueGetter: ({ data }) => (data ? keywordStatus(data) : ""),
   cellRenderer: KeywordStatusCell,
   // 사유 전문은 툴팁으로
