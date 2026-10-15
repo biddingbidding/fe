@@ -20,6 +20,7 @@ import {
   ChartLine,
   ListOrdered,
   ChevronDown,
+  CircleQuestionMark,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -473,6 +474,30 @@ const lastRankCol: ColDef<AdGroupKeyword> = {
     return max != null && rank > max ? `${max}위 밖` : `${rank}위`
   },
   tooltipValueGetter: ({ data }) => (data ? rankTooltip(data) : undefined),
+  cellRenderer: LastRankCell,
+}
+
+/**
+ * 현재 순위 셀 — 검토는 했는데 순위를 못 구한 키워드는 "-" 대신 ? 아이콘을 보여
+ * 툴팁(왜 못 구했는지)이 있다는 걸 알린다. 검토 전이면 그냥 "-"
+ */
+function LastRankCell({
+  data,
+  valueFormatted,
+}: CustomCellRendererProps<AdGroupKeyword, number | null>) {
+  if (!data) return null
+  const a = data.autobid
+  if (a?.lastRunAt && a.lastRank == null) {
+    return (
+      <span
+        aria-label="순위를 계산하지 못한 이유 보기"
+        className="inline-flex h-full cursor-help items-center text-muted-foreground"
+      >
+        <CircleQuestionMark className="size-3.5" />
+      </span>
+    )
+  }
+  return <>{valueFormatted}</>
 }
 
 /** 현재 순위 툴팁 — 값이 있으면 뜻을, "-" 면 왜 못 구했는지를 마지막 검토 사유로 가른다 */
@@ -864,6 +889,8 @@ export function BiddingKeywordGrid({
         <AgGridReact<AdGroupKeyword>
           ref={gridRef}
           theme={gridTheme}
+          // 셀 툴팁(사유·설명)이 기본 2초 대기 없이 바로 뜨게
+          tooltipShowDelay={300}
           rowData={keywords}
           getRowId={getRowId}
           columnDefs={columnDefs}

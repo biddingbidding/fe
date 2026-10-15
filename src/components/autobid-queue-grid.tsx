@@ -542,6 +542,8 @@ export function AutobidQueueGrid({
     <AgGridReact<AutobidQueueItem>
       ref={gridRef}
       theme={gridTheme}
+      // 셀 툴팁(사유·설명)이 기본 2초 대기 없이 바로 뜨게
+      tooltipShowDelay={300}
       rowData={items}
       getRowId={getRowId}
       columnDefs={columnDefs}

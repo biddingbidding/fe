@@ -797,6 +797,8 @@ export function AdGroupTable({ syncing = false, actions }: AdGroupTableProps) {
         <AgGridReact<AdGroup>
           ref={gridRef}
           theme={gridTheme}
+          // 셀 툴팁(사유·설명)이 기본 2초 대기 없이 바로 뜨게
+          tooltipShowDelay={300}
           rowData={visibleGroups}
           getRowId={getRowId}
           columnDefs={columnDefs}
